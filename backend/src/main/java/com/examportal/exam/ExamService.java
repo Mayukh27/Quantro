@@ -1,7 +1,11 @@
 package com.examportal.exam;
 
+import com.examportal.attempt.AttemptRepository;
 import com.examportal.common.FeatureDisabledException;
 import com.examportal.config.FeatureFlags;
+import com.examportal.evaluation.EvaluationRepository;
+import com.examportal.proctor.ViolationLogRepository;
+import com.examportal.prefetch.ImagePrefetchService;
 import com.examportal.question.Question;
 import com.examportal.question.QuestionService;
 import com.fasterxml.jackson.core.type.TypeReference;
@@ -22,8 +26,12 @@ public class ExamService {
     private final ExamRepository examRepository;
     private final BlueprintRepository blueprintRepository;
     private final QuestionService questionService;
+    private final AttemptRepository attemptRepository;
+    private final EvaluationRepository evaluationRepository;
+    private final ViolationLogRepository violationLogRepository;
     private final FeatureFlags featureFlags;
     private final ObjectMapper objectMapper;
+    private final ImagePrefetchService imagePrefetchService;
 
     public ExamDTO create(ExamDTO dto) {
         if (!featureFlags.isBlueprint()) throw new FeatureDisabledException("blueprint");
@@ -42,26 +50,46 @@ public class ExamService {
     }
 
     public BlueprintDTO createBlueprint(BlueprintDTO dto) {
-        List<BlueprintEntry> entries = dto.getEntries().stream()
-                .map(e -> BlueprintEntry.builder()
-                        .subjectId(e.getSubjectId())
-                        .sectionName(e.getSectionName())  // null/blank is fine
-                        .subjectIds(String.valueOf(e.getSubjectId()))  // keep CSV in sync
-                        .questionCount(e.getQuestionCount())
-                        .marksPerQuestion(e.getMarksPerQuestion() != null ? e.getMarksPerQuestion() : 1)
-                        .negativeMarks(e.getNegativeMarks() != null ? e.getNegativeMarks() : 0.25)
-                        .build())
-                .toList();
+        if (!featureFlags.isBlueprint()) throw new FeatureDisabledException("blueprint");
+        List<BlueprintEntry> entries = toBlueprintEntries(dto.getEntries());
+        int totalMarks = calculateTotalMarks(entries);
 
         ExamBlueprint blueprint = ExamBlueprint.builder()
                 .name(dto.getName())
                 .description(dto.getDescription())
                 .durationMinutes(dto.getDurationMinutes())
-                .totalMarks(dto.getTotalMarks())
+                .totalMarks(totalMarks)
+                .optionShuffle(dto.getOptionShuffle() == null || dto.getOptionShuffle())
                 .entries(entries)
                 .build();
         blueprint = blueprintRepository.save(blueprint);
         return toBlueprintDTO(blueprint);
+    }
+
+    @Transactional
+    public BlueprintDTO updateBlueprint(Long blueprintId, BlueprintDTO dto) {
+        if (!featureFlags.isBlueprint()) throw new FeatureDisabledException("blueprint");
+        ExamBlueprint blueprint = blueprintRepository.findById(blueprintId)
+                .orElseThrow(() -> new IllegalArgumentException("Blueprint not found: " + blueprintId));
+
+        assertBlueprintEditable(blueprintId);
+
+        List<BlueprintEntry> entries = toBlueprintEntries(dto.getEntries());
+        int totalMarks = calculateTotalMarks(entries);
+
+        blueprint.setName(dto.getName());
+        blueprint.setDescription(dto.getDescription());
+        blueprint.setDurationMinutes(dto.getDurationMinutes());
+        blueprint.setTotalMarks(totalMarks);
+        blueprint.setOptionShuffle(dto.getOptionShuffle() == null || dto.getOptionShuffle());
+
+        if (blueprint.getEntries() == null) {
+            blueprint.setEntries(new ArrayList<>());
+        }
+        blueprint.getEntries().clear();
+        blueprint.getEntries().addAll(entries);
+
+        return toBlueprintDTO(blueprintRepository.save(blueprint));
     }
 
     public List<BlueprintDTO> getAllBlueprints() {
@@ -78,6 +106,39 @@ public class ExamService {
                     "Cannot delete blueprint: " + using.size() + " exam(s) reference it.");
         }
         blueprintRepository.delete(blueprint);
+    }
+
+    private void assertBlueprintEditable(Long blueprintId) {
+        List<Exam> using = examRepository.findByBlueprintId(blueprintId);
+        if (using.isEmpty()) return;
+        boolean hasLocked = using.stream()
+                .anyMatch(e -> e.getStatus() != ExamStatus.DRAFT && e.getStatus() != ExamStatus.CANCELLED);
+        if (hasLocked) {
+            throw new IllegalStateException("Cannot edit blueprint: published or completed exams reference it.");
+        }
+    }
+
+    private List<BlueprintEntry> toBlueprintEntries(List<BlueprintEntryDTO> entries) {
+        if (entries == null || entries.isEmpty()) {
+            throw new IllegalArgumentException("Blueprint must contain at least one entry");
+        }
+        return new ArrayList<>(entries.stream()
+                .map(e -> BlueprintEntry.builder()
+                        .subjectId(e.getSubjectId())
+                        .sectionName(e.getSectionName())
+                        .subjectIds(String.valueOf(e.getSubjectId()))
+                        .questionCount(e.getQuestionCount())
+                        .marksPerQuestion(e.getMarksPerQuestion() != null ? e.getMarksPerQuestion() : 1)
+                        .negativeMarks(e.getNegativeMarks() != null ? e.getNegativeMarks() : 0.25)
+                        .build())
+            .toList());
+    }
+
+        private int calculateTotalMarks(List<BlueprintEntry> entries) {
+        return entries.stream()
+                .mapToInt(e -> (e.getQuestionCount() != null ? e.getQuestionCount() : 0)
+                        * (e.getMarksPerQuestion() != null ? e.getMarksPerQuestion() : 0))
+                .sum();
     }
 
     /**
@@ -137,6 +198,38 @@ public class ExamService {
         }
 
         exam.setStatus(ExamStatus.PUBLISHED);
+        Exam saved = examRepository.save(exam);
+
+        // Warm nginx cache for all images belonging to the published exam.
+        imagePrefetchService.prefetchExamImagesAsync(saved.getId(), allMasterIds);
+
+        return toDTO(saved);
+    }
+
+    @Transactional
+    public ExamDTO cancel(Long examId) {
+        Exam exam = getEntity(examId);
+        if (exam.getStatus() != ExamStatus.PUBLISHED) {
+            throw new IllegalStateException("Only PUBLISHED exams can be cancelled");
+        }
+        exam.setStatus(ExamStatus.CANCELLED);
+        return toDTO(examRepository.save(exam));
+    }
+
+    @Transactional
+    public ExamDTO reschedule(Long examId, LocalDateTime start, LocalDateTime end) {
+        Exam exam = getEntity(examId);
+        if (exam.getStatus() != ExamStatus.PUBLISHED) {
+            throw new IllegalStateException("Only PUBLISHED exams can be rescheduled");
+        }
+        if (start == null || end == null) {
+            throw new IllegalArgumentException("Start and end time are required");
+        }
+        if (start.isAfter(end)) {
+            throw new IllegalArgumentException("Start time must be before end time");
+        }
+        exam.setScheduledStart(start);
+        exam.setScheduledEnd(end);
         return toDTO(examRepository.save(exam));
     }
 
@@ -155,6 +248,29 @@ public class ExamService {
     }
 
     public ExamDTO findById(Long id) { return toDTO(getEntity(id)); }
+
+    @Transactional
+    public Map<String, Object> deleteExam(Long examId) {
+        Exam exam = getEntity(examId);
+        if (exam.getStatus() == ExamStatus.PUBLISHED) {
+            LocalDateTime now = LocalDateTime.now();
+            if (!now.isBefore(exam.getScheduledStart()) && !now.isAfter(exam.getScheduledEnd())) {
+                throw new IllegalStateException("Cannot delete an active exam. Cancel it first.");
+            }
+        }
+
+        int deletedViolations = violationLogRepository.deleteByExamId(examId);
+        long deletedResults = evaluationRepository.deleteByExamId(examId);
+        int deletedAttempts = attemptRepository.deleteByExamId(examId);
+        examRepository.deleteById(examId);
+
+        return Map.of(
+                "examId", examId,
+                "deletedAttempts", deletedAttempts,
+                "deletedResults", deletedResults,
+                "deletedViolations", deletedViolations
+        );
+    }
 
     public Exam getEntity(Long id) {
         return examRepository.findById(id)
@@ -212,7 +328,8 @@ public class ExamService {
                 .toList();
         return BlueprintDTO.builder()
                 .id(b.getId()).name(b.getName()).description(b.getDescription())
-                .durationMinutes(b.getDurationMinutes()).totalMarks(b.getTotalMarks())
+            .durationMinutes(b.getDurationMinutes()).totalMarks(b.getTotalMarks())
+                .optionShuffle(Boolean.TRUE.equals(b.getOptionShuffle()))
                 .entries(entries).build();
     }
 }

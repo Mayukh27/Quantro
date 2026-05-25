@@ -39,4 +39,12 @@ public class BlueprintController {
         examService.deleteBlueprint(id);
         return ResponseEntity.ok(ApiResponse.success("Blueprint deleted", null));
     }
+
+    @PutMapping("/{id}")
+    @PreAuthorize("hasRole('ADMIN')")
+    public ResponseEntity<ApiResponse<BlueprintDTO>> updateBlueprint(
+            @PathVariable Long id,
+            @Valid @RequestBody BlueprintDTO dto) {
+        return ResponseEntity.ok(ApiResponse.success("Blueprint updated", examService.updateBlueprint(id, dto)));
+    }
 }

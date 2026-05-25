@@ -7,6 +7,6 @@ import org.springframework.context.annotation.Configuration;
  * AppConfig - Root configuration. Enables ConfigurationProperties binding.
  */
 @Configuration
-@EnableConfigurationProperties(FeatureFlags.class)
+@EnableConfigurationProperties({FeatureFlags.class, PrefetchProperties.class})
 public class AppConfig {
 }

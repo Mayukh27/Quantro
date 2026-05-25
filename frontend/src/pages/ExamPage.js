@@ -5,6 +5,7 @@ import { startExam, saveAnswers, submitExam } from '../api/attemptApi';
 import useTimer from '../hooks/useTimer';
 import useViolationDetector from '../hooks/useViolationDetector';
 import Spinner from '../components/Spinner';
+import BrandLogo from '../components/BrandLogo';
 
 const STATUS = {
   NOT_VISITED:     { bg: '#cbd5e1', color: '#334155', label: 'Not Visited' },
@@ -102,6 +103,7 @@ export default function ExamPage() {
   const [visited,     setVisited]     = useState(new Set());
   const [activeSection, setActiveSection] = useState(null);
   const [submitting,  setSubmitting]  = useState(false);
+  const [submitted,   setSubmitted]   = useState(false);
   const [showConfirm, setShowConfirm] = useState(false);
   const [snackbar,    setSnackbar]    = useState('');
 
@@ -111,6 +113,7 @@ export default function ExamPage() {
 
   const autoSaveRef   = useRef(null);
   const snackbarTimerRef = useRef(null);
+  const redirectTimerRef = useRef(null);
   const latestAnswersRef = useRef({});
   const latestMarkedRef = useRef([]);
   const saveChainRef = useRef(Promise.resolve());
@@ -172,7 +175,7 @@ export default function ExamPage() {
 
   /* ── SUBMIT ──────────────────────────────────────────────────── */
   const doSubmit = useCallback(async () => {
-    if (!session || submitting) return;
+    if (!session || submitting || submitted) return;
     setSubmitting(true);
     try {
       await queueSaveAnswers(session.attemptId, {
@@ -185,12 +188,15 @@ export default function ExamPage() {
       if (document.fullscreenElement && document.exitFullscreen) {
         await document.exitFullscreen().catch(() => {});
       }
-      navigate('/result/' + session.attemptId);
+      setSubmitted(true);
+      redirectTimerRef.current = setTimeout(() => {
+        navigate('/student');
+      }, 5000);
     } catch (err) {
       setError('Submission failed: ' + (err.response?.data?.message || 'Please try again.'));
       setSubmitting(false);
     }
-  }, [session, submitting, queueSaveAnswers, navigate]);
+  }, [session, submitting, submitted, queueSaveAnswers, navigate]);
 
   /* ── FULLSCREEN EXIT CALLBACK (from violation detector) ──────── */
   const handleFullscreenExit = useCallback((data) => {
@@ -216,6 +222,11 @@ export default function ExamPage() {
     fsWarningRef.current = false;
   }, []);
 
+  const handleBackToDashboard = useCallback(() => {
+    if (redirectTimerRef.current) clearTimeout(redirectTimerRef.current);
+    navigate('/student');
+  }, [navigate]);
+
   useEffect(() => {
     latestAnswersRef.current = answers;
   }, [answers]);
@@ -232,6 +243,12 @@ export default function ExamPage() {
       if (snackbarTimerRef.current) clearTimeout(snackbarTimerRef.current);
     };
   }, [snackbar]);
+
+  useEffect(() => {
+    return () => {
+      if (redirectTimerRef.current) clearTimeout(redirectTimerRef.current);
+    };
+  }, []);
 
   /* ── PREVENT REFRESH / BACK ─────────────────────────────────── */
   useEffect(() => {
@@ -315,6 +332,24 @@ export default function ExamPage() {
 
   if (!session) return null;
 
+  if (submitted) return (
+    <div style={{ minHeight:'100vh', background:'#fff', display:'flex', alignItems:'center', justifyContent:'center', padding:20 }}>
+      <div style={{ textAlign:'center', maxWidth:480, width:'100%' }}>
+        <div style={{ fontSize:48, marginBottom:12 }}>✅</div>
+        <h2 style={{ fontSize:20, fontWeight:700, marginBottom:8 }}>Answers Recorded</h2>
+        <p style={{ color:'var(--text-muted)', marginBottom:20 }}>
+          Your answers have been recorded. You can return to your dashboard now.
+        </p>
+        <button
+          onClick={handleBackToDashboard}
+          style={{ padding:'10px 20px', background:'var(--primary)', color:'#fff', border:'none', borderRadius:6, fontWeight:600, cursor:'pointer' }}
+        >
+          Back to Dashboard
+        </button>
+      </div>
+    </div>
+  );
+
   if (!session.questions?.length) return (
     <div style={{ minHeight:'100vh', display:'flex', alignItems:'center', justifyContent:'center', background:'var(--bg)', padding:20 }}>
       <div style={{ background:'#fff', borderRadius:12, padding:40, maxWidth:520, textAlign:'center', boxShadow:'var(--shadow-md)' }}>
@@ -337,6 +372,14 @@ export default function ExamPage() {
     ? `/questions/${q.id}/combined-option-image`
     : null;
   const questionText = (q.questionText || '').trim();
+  const isCodeLike = (() => {
+    if (!questionText) return false;
+    const t = String(questionText);
+    const hasLineBreaks = t.includes('\n') || t.includes('\r');
+    const hasCodePunctuation = /[{};]|->|::/.test(t) || /\([^\)]*\)/.test(t);
+    const hasCodeKeywords = /\b(if|else|for|while|return|def|class|function|public|private|static|switch|case)\b/.test(t);
+    return hasLineBreaks || (hasCodePunctuation && hasCodeKeywords) || /\b#include\b/.test(t);
+  })();
   const isQuestionTextBlank =
     questionText === '' ||
     questionText === 'Image-based question' ||
@@ -355,6 +398,7 @@ export default function ExamPage() {
           onReturnToFullscreen={handleReturnFullscreen}
         />
       )}
+
 
       {/* TOP BAR */}
       <div style={{ background:'#1e3a5f', color:'#fff', height:52, display:'flex', alignItems:'center', padding:'0 20px', justifyContent:'space-between', flexShrink:0, zIndex:100 }}>
@@ -415,15 +459,34 @@ export default function ExamPage() {
                   <img
                     src={questionIllustrationSrc}
                     alt="Question illustration"
-                    style={{ maxWidth:'100%', maxHeight:260, objectFit:'contain', borderRadius:6,
-                      display:'block', border:'1px solid var(--border)', background:'#fff' }}
+                    draggable={false}
+                    onContextMenu={(e) => e.preventDefault()}
+                    onMouseDown={(e) => e.preventDefault()}
+                    style={{
+                      maxWidth: '100%', maxHeight: 420, objectFit: 'contain', borderRadius: 6,
+                      display: 'block', border: '1px solid var(--border)', background: '#fff',
+                      userSelect: 'none', pointerEvents: 'none'
+                    }}
                   />
                 </div>
               )}
 
               {/* Question text (may be empty when image alone is used) */}
               {!isQuestionTextBlank && (
-                <p style={{ fontSize:15, lineHeight:1.7, color:'var(--text-primary)', fontWeight:500, margin:0 }}>
+                <p style={{
+                  fontSize:15,
+                  lineHeight:1.7,
+                  color:'var(--text-primary)',
+                  fontWeight:500,
+                  margin:0,
+                  whiteSpace:'pre-wrap',
+                  wordBreak:'break-word',
+                  fontFamily: isCodeLike ? 'Consolas, "Courier New", monospace' : 'inherit',
+                  background: isCodeLike ? '#f8fafc' : 'transparent',
+                  border: isCodeLike ? '1px solid var(--border)' : 'none',
+                  borderRadius: isCodeLike ? 6 : 0,
+                  padding: isCodeLike ? '10px 12px' : 0
+                }}>
                   {questionText}
                 </p>
               )}
@@ -437,8 +500,14 @@ export default function ExamPage() {
                   <img
                     src={optionIllustrationSrc}
                     alt="Options"
-                    style={{ maxWidth:'100%', maxHeight:320, objectFit:'contain', borderRadius:6,
-                      display:'block', border:'1px solid var(--border)', background:'#fff' }}
+                    draggable={false}
+                    onContextMenu={(e) => e.preventDefault()}
+                    onMouseDown={(e) => e.preventDefault()}
+                    style={{
+                      maxWidth: '100%', maxHeight: 420, objectFit: 'contain', borderRadius: 6,
+                      display: 'block', border: '1px solid var(--border)', background: '#fff',
+                      userSelect: 'none', pointerEvents: 'none'
+                    }}
                   />
                 </div>
               )}
@@ -469,9 +538,15 @@ export default function ExamPage() {
                       {hasOptImg && (
                         <img
                           src={`/questions/${q.id}/option-image/${i}`}
-                          alt={`Option ${String.fromCharCode(65+i)}`}
-                          style={{ maxWidth:'100%', maxHeight:120, objectFit:'contain', borderRadius:4,
-                            display:'block', marginBottom: opt ? 6 : 0, border:'1px solid var(--border)' }}
+                          alt={`Option ${String.fromCharCode(65 + i)}`}
+                          draggable={false}
+                          onContextMenu={(e) => e.preventDefault()}
+                          onMouseDown={(e) => e.preventDefault()}
+                          style={{
+                            maxWidth: '100%', maxHeight: 200, objectFit: 'contain', borderRadius: 4,
+                            display: 'block', marginBottom: opt ? 6 : 0, border: '1px solid var(--border)',
+                            userSelect: 'none', pointerEvents: 'none'
+                          }}
                         />
                       )}
                       {opt && (
@@ -493,7 +568,7 @@ export default function ExamPage() {
                   background:marked.includes(q.id)?'#fff7ed':'#fff',
                   color:marked.includes(q.id)?'#f97316':'var(--text-secondary)',
                   borderRadius:6, cursor:'pointer', fontWeight:600, fontSize:13 }}>
-                {marked.includes(q.id) ? '🔖 Unmark' : '🔖 Mark for Review'}
+                {marked.includes(q.id) ? ' Unmark' : ' Mark for Review'}
               </button>
               <button onClick={() => handleClear(q.id)}
                 style={{ padding:'8px 16px', border:'1px solid var(--border)', background:'#fff',

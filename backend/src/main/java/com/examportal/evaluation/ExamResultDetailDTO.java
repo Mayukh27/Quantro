@@ -25,6 +25,9 @@ public class ExamResultDetailDTO {
     private Long studentId;
     private String studentName;
     private String studentEmail;
+    private String studentStream;
+    private String studentSection;
+    private String studentYear;
     private Long examId;
     private String examTitle;
     private Double totalScore;

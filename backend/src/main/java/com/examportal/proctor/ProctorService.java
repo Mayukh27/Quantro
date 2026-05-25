@@ -62,7 +62,7 @@ public class ProctorService {
         //ViolationType.COPY_PASTE,
         //ViolationType.CONTEXT_MENU,
         ViolationType.KEYBOARD_SHORTCUT,
-        ViolationType.MOUSE_LEAVE,
+        //ViolationType.MOUSE_LEAVE, [DISABLED]
         ViolationType.DEVTOOLS_OPEN
     );
 

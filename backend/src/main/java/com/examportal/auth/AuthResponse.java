@@ -14,7 +14,9 @@ public class AuthResponse {
     private String token;
     private Long userId;
     private String email;
+    private String enrollmentNo;
     private String fullName;
+    private String studentYear;
     private Role role;
     private boolean approved;
     private String sessionToken;

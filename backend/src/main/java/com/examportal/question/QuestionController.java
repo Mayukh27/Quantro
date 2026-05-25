@@ -36,7 +36,7 @@ import java.util.List;
  *       optionImage_3    (file, optional) — image for option D
  *
  * EXCEL UPLOAD (backward compatible):
- *   POST /api/questions/excel              - Bulk upload via .xlsx (TEACHER/ADMIN).
+ *   POST /api/questions/excel              - Bulk upload via .xls/.xlsx/.xlsm/.xltx/.xltm (TEACHER/ADMIN).
  *     file      : required Excel
  *     imageZip  : optional ZIP containing images referenced in extra image columns
  *

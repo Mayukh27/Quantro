@@ -1,13 +1,15 @@
 package com.examportal.auth;
 
-import jakarta.validation.constraints.Email;
+import com.fasterxml.jackson.annotation.JsonAlias;
 import jakarta.validation.constraints.NotBlank;
 import lombok.Data;
 
 @Data
 public class LoginRequest {
-    @NotBlank @Email
-    private String email;
+    @NotBlank
+    @JsonAlias({"email", "username", "enrollmentNo"})
+    private String identifier;
+
     @NotBlank
     private String password;
 }

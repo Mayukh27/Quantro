@@ -10,6 +10,8 @@ import java.util.Optional;
 @Repository
 public interface EvaluationRepository extends JpaRepository<EvaluationResult, Long> {
     Optional<EvaluationResult> findByAttemptId(Long attemptId);
+    long deleteByAttemptId(Long attemptId);
+    long deleteByExamId(Long examId);
     List<EvaluationResult> findByStudentId(Long studentId);
     List<EvaluationResult> findByExamId(Long examId);
 

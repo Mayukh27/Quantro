@@ -17,5 +17,6 @@ public class BlueprintDTO {
     private String description;
     private Integer durationMinutes;
     private Integer totalMarks;
+    private Boolean optionShuffle;
     private List<BlueprintEntryDTO> entries;
 }

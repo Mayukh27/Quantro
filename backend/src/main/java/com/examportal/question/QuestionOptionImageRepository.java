@@ -11,6 +11,9 @@ public interface QuestionOptionImageRepository extends JpaRepository<QuestionOpt
 
     List<QuestionOptionImage> findByQuestionIdOrderByOptionIndex(Long questionId);
 
+    @Query("SELECT i.optionIndex FROM QuestionOptionImage i WHERE i.question.id = :questionId ORDER BY i.optionIndex")
+    List<Integer> findOptionIndexes(Long questionId);
+
     @Modifying
     @Transactional
     @Query("DELETE FROM QuestionOptionImage i WHERE i.question.id = :questionId")

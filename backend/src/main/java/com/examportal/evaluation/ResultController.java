@@ -11,12 +11,14 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.access.AccessDeniedException;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.security.core.userdetails.UserDetails;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
+import java.util.Map;
 
 /**
  * ResultController
@@ -40,8 +42,12 @@ public class ResultController {
     /** Individual result — accessible to the student themselves, admin, teacher */
     @GetMapping("/{attemptId}")
     @PreAuthorize("hasAnyRole('STUDENT', 'ADMIN', 'TEACHER')")
-    public ResponseEntity<ApiResponse<EvaluationResult>> getResult(@PathVariable Long attemptId) {
-        return ResponseEntity.ok(ApiResponse.success(evaluationService.findByAttemptId(attemptId)));
+    public ResponseEntity<ApiResponse<EvaluationResult>> getResult(
+            @PathVariable Long attemptId,
+            @AuthenticationPrincipal UserDetails userDetails) {
+        EvaluationResult result = evaluationService.findByAttemptId(attemptId);
+        assertStudentOwnsAttemptIfStudent(result, userDetails);
+        return ResponseEntity.ok(ApiResponse.success(result));
     }
 
     /**
@@ -53,6 +59,18 @@ public class ResultController {
     public ResponseEntity<ApiResponse<List<ExamResultDetailDTO>>> getExamStudentResults(
             @PathVariable Long examId) {
         return ResponseEntity.ok(ApiResponse.success(evaluationService.getExamResultsForAdmin(examId)));
+    }
+
+    /**
+     * Evaluate all submitted/auto-submitted attempts for an exam on demand.
+     * Used by Admin/Teacher "Evaluate" action.
+     */
+    @PostMapping("/exam/{examId}/evaluate")
+    @PreAuthorize("hasAnyRole('ADMIN', 'TEACHER')")
+    public ResponseEntity<ApiResponse<Map<String, Object>>> evaluateExam(
+            @PathVariable Long examId) {
+        int evaluated = evaluationService.evaluateExam(examId);
+        return ResponseEntity.ok(ApiResponse.success(Map.of("evaluated", evaluated)));
     }
 
     /**
@@ -84,7 +102,11 @@ public class ResultController {
      */
     @GetMapping("/pdf/{attemptId}")
     @PreAuthorize("hasAnyRole('STUDENT', 'ADMIN', 'TEACHER')")
-    public ResponseEntity<byte[]> downloadResultPdf(@PathVariable Long attemptId) {
+    public ResponseEntity<byte[]> downloadResultPdf(
+            @PathVariable Long attemptId,
+            @AuthenticationPrincipal UserDetails userDetails) {
+        EvaluationResult result = evaluationService.findByAttemptId(attemptId);
+        assertStudentOwnsAttemptIfStudent(result, userDetails);
         byte[] pdfBytes = reportService.generateResultPdf(attemptId);
         return ResponseEntity.ok()
             .header(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=result_" + attemptId + ".pdf")
@@ -100,5 +122,18 @@ public class ResultController {
             .header(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=exam_" + examId + "_detailed_results.xlsx")
             .contentType(MediaType.parseMediaType("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"))
             .body(excel);
+    }
+
+    private void assertStudentOwnsAttemptIfStudent(EvaluationResult result, UserDetails userDetails) {
+        if (userDetails == null) return;
+
+        boolean isStudent = userDetails.getAuthorities().stream()
+                .anyMatch(a -> "ROLE_STUDENT".equals(a.getAuthority()));
+        if (!isStudent) return;
+
+        com.examportal.user.User student = userService.findByEmail(userDetails.getUsername());
+        if (!student.getId().equals(result.getStudentId())) {
+            throw new AccessDeniedException("You can only access your own result");
+        }
     }
 }

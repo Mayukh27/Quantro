@@ -8,7 +8,7 @@ import org.springframework.stereotype.Service;
 
 /**
  * UserService - Implements Spring Security UserDetailsService.
- * Loads user by email for JWT authentication chain.
+ * Loads user by email or enrollment number for JWT authentication chain.
  * Also exposes helper methods used by other services.
  */
 @Service
@@ -18,9 +18,10 @@ public class UserService implements UserDetailsService {
     private final UserRepository userRepository;
 
     @Override
-    public UserDetails loadUserByUsername(String email) throws UsernameNotFoundException {
-        return userRepository.findByEmail(email)
-            .orElseThrow(() -> new UsernameNotFoundException("User not found: " + email));
+    public UserDetails loadUserByUsername(String identifier) throws UsernameNotFoundException {
+        return userRepository.findByEmail(identifier)
+            .or(() -> userRepository.findByEnrollmentNo(identifier))
+            .orElseThrow(() -> new UsernameNotFoundException("User not found: " + identifier));
     }
 
     public User findById(Long id) {

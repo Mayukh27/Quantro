@@ -7,6 +7,11 @@ CREATE TABLE IF NOT EXISTS users (
     email       VARCHAR(255) NOT NULL UNIQUE,
     password    VARCHAR(255) NOT NULL,
     full_name   VARCHAR(255) NOT NULL,
+    enrollment_no VARCHAR(100) UNIQUE,
+    stream      VARCHAR(255),
+    section     VARCHAR(100),
+    class_roll_no VARCHAR(100),
+    date_of_birth DATE,
     role        VARCHAR(20)  NOT NULL CHECK (role IN ('ADMIN','TEACHER','STUDENT')),
     approved    BOOLEAN      NOT NULL DEFAULT FALSE,
     enabled     BOOLEAN      NOT NULL DEFAULT TRUE,
@@ -48,6 +53,7 @@ CREATE TABLE IF NOT EXISTS exam_blueprints (
     description      TEXT,
     duration_minutes INT NOT NULL,
     total_marks      INT,
+    option_shuffle   BOOLEAN DEFAULT TRUE,
     created_at       TIMESTAMP
 );
 
@@ -141,6 +147,10 @@ ALTER TABLE exam_attempts ADD COLUMN IF NOT EXISTS fullscreen_exit_count INT DEF
 
 -- 3. Blueprint delete guard (no schema change — handled in service layer)
 
+-- 3b. Blueprint option shuffle toggle
+ALTER TABLE exam_blueprints
+    ADD COLUMN IF NOT EXISTS option_shuffle BOOLEAN NOT NULL DEFAULT TRUE;
+
 -- 4. New violation types (enum stored as VARCHAR — no migration needed, new values
 --    MOUSE_LEAVE and DEVTOOLS_OPEN are auto-handled by PostgreSQL VARCHAR column)
 
@@ -174,6 +184,15 @@ ALTER TABLE blueprint_entries ADD COLUMN IF NOT EXISTS negative_marks DOUBLE PRE
 ALTER TABLE users
 ADD COLUMN IF NOT EXISTS is_logged_in BOOLEAN DEFAULT FALSE,
 ADD COLUMN IF NOT EXISTS session_token VARCHAR(255);
+
+ALTER TABLE users
+ADD COLUMN IF NOT EXISTS enrollment_no VARCHAR(100),
+ADD COLUMN IF NOT EXISTS stream VARCHAR(255),
+ADD COLUMN IF NOT EXISTS section VARCHAR(100),
+ADD COLUMN IF NOT EXISTS class_roll_no VARCHAR(100),
+ADD COLUMN IF NOT EXISTS date_of_birth DATE;
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_users_enrollment_no ON users(enrollment_no);
 
 -- Backfill subject_ids from subject_id for any existing rows
 UPDATE blueprint_entries

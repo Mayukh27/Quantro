@@ -18,7 +18,6 @@ import org.apache.poi.ss.usermodel.Row;
 import org.apache.poi.ss.usermodel.Sheet;
 import org.apache.poi.ss.usermodel.Workbook;
 import org.apache.poi.xssf.usermodel.XSSFWorkbook;
-import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -43,19 +42,32 @@ public class EvaluationService {
     private final ExamRepository examRepository;
     private final ObjectMapper objectMapper;
 
-    @Scheduled(fixedDelay = 5000)
-    @Transactional
-    public void evaluatePendingAttempts() {
-        attemptRepository.findAll().stream()
-            .filter(a -> (a.getStatus() == AttemptStatus.SUBMITTED
-                       || a.getStatus() == AttemptStatus.AUTO_SUBMITTED)
-                && evaluationRepository.findByAttemptId(a.getId()).isEmpty())
-            .forEach(attempt -> {
-                try { evaluate(attempt); }
-                catch (Exception e) {
+    /**
+     * Evaluate all SUBMITTED/AUTO_SUBMITTED attempts for an exam.
+     * NOT @Transactional at the method level — each evaluate() call is independent
+     * so locks don't accumulate and block concurrent saveAnswers() calls from IN_PROGRESS students.
+     * This prevents the "evaluating while exam is on doesn't accept answers" issue.
+     */
+    public int evaluateExam(Long examId) {
+        List<ExamAttempt> attempts = attemptRepository.findByExamId(examId);
+        int evaluatedCount = 0;
+
+        for (ExamAttempt attempt : attempts) {
+            if (attempt.getSubmittedAt() != null
+                    && (attempt.getStatus() == AttemptStatus.SUBMITTED
+                    || attempt.getStatus() == AttemptStatus.AUTO_SUBMITTED)
+                    && evaluationRepository.findByAttemptId(attempt.getId()).isEmpty()) {
+                try {
+                    evaluate(attempt);
+                    evaluatedCount++;
+                } catch (Exception e) {
+                    // Log and continue so one failed evaluation doesn't block others
                     System.err.println("Evaluation failed for attempt " + attempt.getId() + ": " + e.getMessage());
                 }
-            });
+            }
+        }
+
+        return evaluatedCount;
     }
 
     @Transactional
@@ -177,6 +189,9 @@ public class EvaluationService {
                 .studentId(r.getStudentId())
                 .studentName(student != null ? student.getFullName() : "Unknown")
                 .studentEmail(student != null ? student.getEmail() : "")
+                .studentStream(student != null ? student.getStream() : null)
+                .studentSection(student != null ? student.getSection() : null)
+                .studentYear(student != null ? student.getStudentYear() : null)
                 .examId(examId)
                 .examTitle(exam.getTitle())
                 .totalScore(r.getTotalScore())
@@ -206,11 +221,11 @@ public class EvaluationService {
             String[] cols = {
                 "Rank",
                 "Student Name",
-                "Student Email",
-                "Attempt ID",
-                "Exam ID",
+                "Enrollment Number",
+                "Stream",
+                "Section",
+                "Year",
                 "Exam Title",
-                "Status",
                 "Total Score",
                 "Total Questions",
                 "Attempted",
@@ -235,23 +250,24 @@ public class EvaluationService {
 
                 row.createCell(0).setCellValue(i + 1);
                 row.createCell(1).setCellValue(nullSafe(r.getStudentName()));
-                row.createCell(2).setCellValue(nullSafe(r.getStudentEmail()));
-                row.createCell(3).setCellValue(r.getAttemptId() != null ? r.getAttemptId() : 0);
-                row.createCell(4).setCellValue(r.getExamId() != null ? r.getExamId() : 0);
-                row.createCell(5).setCellValue(nullSafe(r.getExamTitle()));
-                row.createCell(6).setCellValue(nullSafe(r.getStatus()));
-                row.createCell(7).setCellValue(r.getTotalScore() != null ? r.getTotalScore() : 0.0);
-                row.createCell(8).setCellValue(r.getTotalQuestions() != null ? r.getTotalQuestions() : 0);
-                row.createCell(9).setCellValue(r.getAttempted() != null ? r.getAttempted() : 0);
-                row.createCell(10).setCellValue(r.getCorrect() != null ? r.getCorrect() : 0);
-                row.createCell(11).setCellValue(r.getWrong() != null ? r.getWrong() : 0);
-                row.createCell(12).setCellValue(r.getUnattempted() != null ? r.getUnattempted() : 0);
-                row.createCell(13).setCellValue(r.getViolationCount() != null ? r.getViolationCount() : 0);
-                row.createCell(14).setCellValue(r.getFullscreenExitCount() != null ? r.getFullscreenExitCount() : 0);
-                row.createCell(15).setCellValue(r.getSubmittedAt() != null ? r.getSubmittedAt().toString() : "");
-                row.createCell(16).setCellValue(r.getEvaluatedAt() != null ? r.getEvaluatedAt().toString() : "");
-                row.createCell(17).setCellValue(safeJson(r.getSubjectWiseBreakdown()));
-                row.createCell(18).setCellValue(violationSummary(r.getViolations()));
+                row.createCell(2).setCellValue(nullSafe(r.getStudentId() != null ? r.getStudentId().toString() : ""));
+                row.createCell(3).setCellValue(nullSafe(r.getStudentStream()));
+                row.createCell(4).setCellValue(nullSafe(r.getStudentSection()));
+                row.createCell(5).setCellValue(nullSafe(r.getStudentYear()));
+                row.createCell(6).setCellValue(nullSafe(r.getStudentEmail()));
+                row.createCell(7).setCellValue(nullSafe(r.getExamTitle()));
+                row.createCell(8).setCellValue(r.getTotalScore() != null ? r.getTotalScore() : 0.0);
+                row.createCell(9).setCellValue(r.getTotalQuestions() != null ? r.getTotalQuestions() : 0);
+                row.createCell(10).setCellValue(r.getAttempted() != null ? r.getAttempted() : 0);
+                row.createCell(11).setCellValue(r.getCorrect() != null ? r.getCorrect() : 0);
+                row.createCell(12).setCellValue(r.getWrong() != null ? r.getWrong() : 0);
+                row.createCell(13).setCellValue(r.getUnattempted() != null ? r.getUnattempted() : 0);
+                row.createCell(14).setCellValue(r.getViolationCount() != null ? r.getViolationCount() : 0);
+                row.createCell(15).setCellValue(r.getFullscreenExitCount() != null ? r.getFullscreenExitCount() : 0);
+                row.createCell(16).setCellValue(r.getSubmittedAt() != null ? r.getSubmittedAt().toString() : "");
+                row.createCell(17).setCellValue(r.getEvaluatedAt() != null ? r.getEvaluatedAt().toString() : "");
+                row.createCell(18).setCellValue(safeJson(r.getSubjectWiseBreakdown()));
+                row.createCell(19).setCellValue(violationSummary(r.getViolations()));
             }
 
             for (int i = 0; i < cols.length; i++) {

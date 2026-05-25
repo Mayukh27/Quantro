@@ -8,6 +8,7 @@ import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
+import java.util.Map;
 
 @RestController
 @RequestMapping("/exams")
@@ -31,6 +32,27 @@ public class ExamController {
 
         return ResponseEntity.ok(
                 ApiResponse.success("Exam published", examService.publish(id))
+        );
+    }
+
+    @PostMapping("/{id}/cancel")
+    @PreAuthorize("hasRole('ADMIN')")
+    public ResponseEntity<ApiResponse<ExamDTO>> cancelExam(@PathVariable Long id) {
+
+        return ResponseEntity.ok(
+                ApiResponse.success("Exam cancelled", examService.cancel(id))
+        );
+    }
+
+    @PostMapping("/{id}/reschedule")
+    @PreAuthorize("hasRole('ADMIN')")
+    public ResponseEntity<ApiResponse<ExamDTO>> rescheduleExam(
+            @PathVariable Long id,
+            @Valid @RequestBody ExamRescheduleRequest request) {
+
+        return ResponseEntity.ok(
+                ApiResponse.success("Exam rescheduled",
+                        examService.reschedule(id, request.getScheduledStart(), request.getScheduledEnd()))
         );
     }
 
@@ -62,6 +84,15 @@ public class ExamController {
 
         return ResponseEntity.ok(
                 ApiResponse.success(examService.findById(id))
+        );
+    }
+
+    @DeleteMapping("/{id}")
+    @PreAuthorize("hasRole('ADMIN')")
+    public ResponseEntity<ApiResponse<Map<String, Object>>> deleteExam(@PathVariable Long id) {
+
+        return ResponseEntity.ok(
+                ApiResponse.success("Exam deleted", examService.deleteExam(id))
         );
     }
 }

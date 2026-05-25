@@ -1,6 +1,8 @@
 package com.examportal.attempt;
 
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Modifying;
+import org.springframework.data.jpa.repository.Query;
 import org.springframework.stereotype.Repository;
 
 import java.util.List;
@@ -13,4 +15,8 @@ public interface AttemptRepository extends JpaRepository<ExamAttempt, Long> {
     List<ExamAttempt> findByExamId(Long examId);
     boolean existsByStudentIdAndExamId(Long studentId, Long examId);
     long countByExamId(Long examId);
+
+    @Modifying
+    @Query("DELETE FROM ExamAttempt a WHERE a.exam.id = :examId")
+    int deleteByExamId(Long examId);
 }

@@ -37,6 +37,9 @@ public class ExamBlueprint {
 
     private Integer totalMarks;
 
+    @Builder.Default
+    private Boolean optionShuffle = true;
+
     @Column(updatable = false)
     private LocalDateTime createdAt;
 

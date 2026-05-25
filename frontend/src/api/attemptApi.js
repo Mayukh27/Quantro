@@ -4,6 +4,7 @@ export const saveAnswers = (attemptId, data) => api.put('/attempts/'+attemptId+'
 export const submitExam = (attemptId) => api.post('/attempts/'+attemptId+'/submit');
 export const getResult = (attemptId) => api.get('/results/'+attemptId);
 export const getMyResults = () => api.get('/results/my');
+export const getMissedExams = () => api.get('/results/missed');
 /** CHANGE: Download result PDF as blob */
 export const downloadResultPdf = (attemptId) =>
   api.get('/results/pdf/'+attemptId, { responseType: 'blob' });

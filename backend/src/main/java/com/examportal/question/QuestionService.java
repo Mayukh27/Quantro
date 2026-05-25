@@ -7,6 +7,12 @@ import com.examportal.user.UserService;
 import lombok.RequiredArgsConstructor;
 import org.apache.poi.ss.usermodel.*;
 import org.apache.poi.ss.usermodel.CellType;
+import org.apache.poi.hssf.usermodel.HSSFClientAnchor;
+import org.apache.poi.hssf.usermodel.HSSFPatriarch;
+import org.apache.poi.hssf.usermodel.HSSFPicture;
+import org.apache.poi.hssf.usermodel.HSSFPictureData;
+import org.apache.poi.hssf.usermodel.HSSFShape;
+import org.apache.poi.hssf.usermodel.HSSFSheet;
 import org.apache.poi.xssf.usermodel.XSSFClientAnchor;
 import org.apache.poi.xssf.usermodel.XSSFDrawing;
 import org.apache.poi.xssf.usermodel.XSSFPicture;
@@ -14,6 +20,7 @@ import org.apache.poi.xssf.usermodel.XSSFPictureData;
 import org.apache.poi.xssf.usermodel.XSSFShape;
 import org.apache.poi.xssf.usermodel.XSSFSheet;
 import org.apache.poi.xssf.usermodel.XSSFWorkbook;
+import org.apache.poi.ss.usermodel.WorkbookFactory;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -40,7 +47,8 @@ import java.util.zip.ZipInputStream;
  *                    and up to 4 optionImage_0 … optionImage_3 files. Raw bytes are
  *                    stored as BYTEA in PostgreSQL via QuestionOptionImage rows.
  *
- *   Excel upload   : Supports both original 10-column text layout and extended layout
+ *   Excel upload   : Supports both original 10-column text layout, compact layout
+ *                    (one question column + one options column), and extended layout
  *                    with optional image path columns:
  *                    K question_image, L option1_image, M option2_image,
  *                    N option3_image, O option4_image.
@@ -149,7 +157,7 @@ public class QuestionService {
     }
 
     /**
-     * Upload questions from an Excel file (.xlsx) and optionally bind images from a ZIP.
+     * Upload questions from an Excel file (.xls/.xlsx/.xlsm) and optionally bind images from a ZIP.
      *
      * Base columns (A..J) remain unchanged and backward compatible.
      * Optional image path columns:
@@ -160,7 +168,7 @@ public class QuestionService {
     public void uploadQuestionsFromExcel(MultipartFile file, MultipartFile imageZip, String uploaderEmail) {
 
         if (file == null || file.isEmpty()) {
-            throw new IllegalArgumentException("No file provided. Please select an .xlsx file.");
+            throw new IllegalArgumentException("No file provided. Please select an Excel file.");
         }
 
         String filename = file.getOriginalFilename() != null
@@ -177,7 +185,7 @@ public class QuestionService {
             BundlePayload bundle = loadBundleZip(file);
             excelBytes = bundle.excelBytes();
             zipImages = bundle.images();
-        } else if (filename.endsWith(".xlsx")) {
+        } else if (isExcelFilename(filename)) {
             try {
                 excelBytes = file.getBytes();
             } catch (Exception e) {
@@ -185,11 +193,11 @@ public class QuestionService {
             }
             zipImages = loadZipImages(imageZip);
         } else {
-            throw new IllegalArgumentException("Invalid file type. Upload .xlsx or a .zip bundle containing one .xlsx.");
+            throw new IllegalArgumentException("Invalid file type. Upload an Excel file (.xls/.xlsx/.xlsm/.xltx/.xltm) or a .zip bundle containing one Excel file.");
         }
 
         try (InputStream is = new ByteArrayInputStream(excelBytes);
-             Workbook workbook = new XSSFWorkbook(is)) {
+             Workbook workbook = WorkbookFactory.create(is)) {
 
             Sheet sheet = workbook.getSheetAt(0);
             Row headerRow = sheet.getRow(0);
@@ -208,15 +216,12 @@ public class QuestionService {
                     Subject subject = resolveSubject(subjectCell);
 
                     Cell qTextCell = getCellByHeaders(row, headers, "question", "question_text");
-                    String questionText = getCellString(qTextCell).trim();
-                    boolean hasImageInput = hasAnyImageInput(row, headers, embeddedImages);
+                    String rawQuestionValue = getCellString(qTextCell).trim();
+                    String questionText = isLikelyImagePath(rawQuestionValue) ? "" : rawQuestionValue;
+                    boolean hasImageInput = hasAnyImageInput(row, headers, zipImages, embeddedImages);
                     if (questionText.isBlank() && !hasImageInput) continue;
 
-                    List<String> options = new ArrayList<>();
-                    options.add(getCellString(getCellByHeaders(row, headers, "option1", "option_a")));
-                    options.add(getCellString(getCellByHeaders(row, headers, "option2", "option_b")));
-                    options.add(getCellString(getCellByHeaders(row, headers, "option3", "option_c")));
-                    options.add(getCellString(getCellByHeaders(row, headers, "option4", "option_d")));
+                    List<String> options = readOptions(row, headers, zipImages, embeddedImages, row.getRowNum());
 
                     Cell correctCell = getCellByHeaders(row, headers, "correct", "correct_option");
                     if (correctCell == null) continue;
@@ -275,10 +280,10 @@ public class QuestionService {
             }
 
         } catch (IllegalArgumentException ex) {
-            throw new RuntimeException(ex.getMessage());
+            throw ex;
         } catch (Exception e) {
             e.printStackTrace();
-            throw new RuntimeException("Excel upload failed: " + e.getMessage());
+            throw new IllegalStateException("Excel upload failed: " + e.getMessage(), e);
         }
     }
 
@@ -308,20 +313,27 @@ public class QuestionService {
             Map<String, ZipImageData> embeddedImages,
             Question question
     ) {
-        String qPath = getCellString(getCellByHeaders(row, headers, "question_image"));
-        String combinedOptPath = getCellString(getCellByHeaders(row, headers, "combined_option_image"));
+        String qPath = readImageReferenceCell(row, headers, zipImages, "question_image");
+        if (qPath.isBlank()) {
+            qPath = readLikelyImagePathCell(row, headers, "question", "question_text");
+        }
+
+        String combinedOptPath = readImageReferenceCell(row, headers, zipImages, "combined_option_image");
+        if (combinedOptPath.isBlank()) {
+            combinedOptPath = readLikelyImagePathCell(row, headers, "options", "options_text", "option");
+        }
 
         ZipImageData qImg = null;
         ZipImageData combinedImg = null;
 
-        qImg = findEmbeddedImage(embeddedImages, row.getRowNum(), headers, "question_image");
+        qImg = findEmbeddedImage(embeddedImages, row.getRowNum(), headers, "question_image", "question", "question_text");
         if (qImg == null && !qPath.isBlank()) {
             qImg = findZipImage(zipImages, qPath, row.getRowNum());
         }
 
         // combined_option_image is now stored separately and rendered in exam page
         // below the question text.
-        combinedImg = findEmbeddedImage(embeddedImages, row.getRowNum(), headers, "combined_option_image");
+        combinedImg = findEmbeddedImage(embeddedImages, row.getRowNum(), headers, "combined_option_image", "options", "options_text", "option");
         if (combinedImg == null && !combinedOptPath.isBlank()) {
             combinedImg = findZipImage(zipImages, combinedOptPath, row.getRowNum());
         }
@@ -339,9 +351,15 @@ public class QuestionService {
 
         List<QuestionOptionImage> optionImages = new ArrayList<>();
         for (int i = 0; i < 4; i++) {
-            String optPath = getCellString(getCellByHeaders(row, headers, "option" + (i + 1) + "_image"));
+            String optPath = readImageReferenceCell(row, headers, zipImages, "option" + (i + 1) + "_image");
+            if (optPath.isBlank()) {
+                optPath = readImageReferenceCell(row, headers, zipImages, optionTextHeaderAliases(i));
+            }
             ZipImageData optImg = null;
             optImg = findEmbeddedImage(embeddedImages, row.getRowNum(), headers, "option" + (i + 1) + "_image");
+            if (optImg == null) {
+                optImg = findEmbeddedImage(embeddedImages, row.getRowNum(), headers, optionTextHeaderAliases(i));
+            }
             if (optImg == null && !optPath.isBlank()) {
                 optImg = findZipImage(zipImages, optPath, row.getRowNum());
             }
@@ -358,29 +376,52 @@ public class QuestionService {
         }
     }
 
-    private boolean hasAnyImageInput(
+        private boolean hasAnyImageInput(
             Row row,
             Map<String, Integer> headers,
+            Map<String, ZipImageData> zipImages,
             Map<String, ZipImageData> embeddedImages
-    ) {
-        String[] imageHeaders = {
-                "question_image",
-                "combined_option_image",
-                "option1_image",
-                "option2_image",
-                "option3_image",
-                "option4_image"
-        };
+        ) {
+        if (findEmbeddedImage(embeddedImages, row.getRowNum(), headers,
+                "question_image", "question", "question_text") != null) {
+            return true;
+        }
+        if (!readLikelyImagePathCell(row, headers,
+                "question_image", "question", "question_text").isBlank()) {
+            return true;
+        }
 
-        for (String header : imageHeaders) {
-            if (findEmbeddedImage(embeddedImages, row.getRowNum(), headers, header) != null) {
+        if (findEmbeddedImage(embeddedImages, row.getRowNum(), headers,
+                "combined_option_image", "options", "options_text", "option") != null) {
+            return true;
+        }
+        if (!readImageReferenceCell(row, headers, zipImages,
+                "combined_option_image").isBlank()) {
+            return true;
+        }
+        if (!readLikelyImagePathCell(row, headers,
+                "combined_option_image", "options", "options_text", "option").isBlank()) {
+            return true;
+        }
+
+        for (int i = 0; i < 4; i++) {
+            if (findEmbeddedImage(embeddedImages, row.getRowNum(), headers,
+                    "option" + (i + 1) + "_image") != null) {
                 return true;
             }
-            String path = getCellString(getCellByHeaders(row, headers, header));
-            if (!path.isBlank()) {
+            if (!readImageReferenceCell(row, headers, zipImages,
+                    "option" + (i + 1) + "_image").isBlank()) {
+                return true;
+            }
+
+            if (findEmbeddedImage(embeddedImages, row.getRowNum(), headers, optionTextHeaderAliases(i)) != null) {
+                return true;
+            }
+            if (!readImageReferenceCell(row, headers, zipImages, optionTextHeaderAliases(i)).isBlank()) {
                 return true;
             }
         }
+
         return false;
     }
 
@@ -425,8 +466,20 @@ public class QuestionService {
         // Fallback: if Excel provides only file name, resolve uniquely across nested folders.
         if (data == null) {
             String fileName = key.contains("/") ? key.substring(key.lastIndexOf('/') + 1) : key;
+            String fileStem = fileName.contains(".") ? fileName.substring(0, fileName.lastIndexOf('.')) : fileName;
             List<ZipImageData> matches = zipImages.entrySet().stream()
-                    .filter(e -> e.getKey().equals(fileName) || e.getKey().endsWith("/" + fileName))
+                .filter(e -> {
+                String candidate = e.getKey();
+                String candidateName = candidate.contains("/") ? candidate.substring(candidate.lastIndexOf('/') + 1) : candidate;
+                String candidateStem = candidateName.contains(".")
+                    ? candidateName.substring(0, candidateName.lastIndexOf('.'))
+                    : candidateName;
+                return candidate.equals(key)
+                    || candidateName.equals(fileName)
+                    || candidateStem.equals(fileStem)
+                    || candidate.endsWith("/" + fileName)
+                    || candidate.endsWith("/" + fileStem);
+                })
                     .map(Map.Entry::getValue)
                     .toList();
             if (matches.size() == 1) {
@@ -461,9 +514,9 @@ public class QuestionService {
                 }
                 byte[] content = bos.toByteArray();
 
-                if (key.endsWith(".xlsx")) {
+                if (isExcelFilename(key)) {
                     if (excel != null) {
-                        throw new IllegalArgumentException("ZIP bundle must contain only one .xlsx file.");
+                        throw new IllegalArgumentException("ZIP bundle must contain only one Excel file.");
                     }
                     excel = content;
                     continue;
@@ -476,14 +529,178 @@ public class QuestionService {
         }
 
         if (excel == null) {
-            throw new IllegalArgumentException("ZIP bundle must contain one .xlsx file at root or inside folders.");
+            throw new IllegalArgumentException("ZIP bundle must contain one Excel file (.xls/.xlsx/.xlsm/.xltx/.xltm) at root or inside folders.");
         }
 
         return new BundlePayload(excel, images);
     }
 
+    private boolean isExcelFilename(String filename) {
+        if (filename == null) return false;
+        String lower = filename.toLowerCase(Locale.ROOT);
+        return lower.endsWith(".xls")
+                || lower.endsWith(".xlsx")
+                || lower.endsWith(".xlsm")
+                || lower.endsWith(".xltx")
+                || lower.endsWith(".xltm");
+    }
+
     private String getCellString(Cell cell) {
         return cell == null ? "" : cell.toString().trim();
+    }
+
+    private String readLikelyImagePathCell(Row row, Map<String, Integer> headers, String... headerNames) {
+        String value = getCellString(getCellByHeaders(row, headers, headerNames));
+        return isLikelyImagePath(value) ? value : "";
+    }
+
+    private String readImageReferenceCell(
+            Row row,
+            Map<String, Integer> headers,
+            Map<String, ZipImageData> zipImages,
+            String... headerNames
+    ) {
+        String value = getCellString(getCellByHeaders(row, headers, headerNames));
+        return isImageReferenceValue(value, zipImages) ? value : "";
+    }
+
+    private boolean isImageReferenceValue(String value, Map<String, ZipImageData> zipImages) {
+        if (value == null) return false;
+        String trimmed = value.trim();
+        if (trimmed.isBlank()) return false;
+        if (isLikelyImagePath(trimmed)) return true;
+        return canResolveZipImage(zipImages, trimmed);
+    }
+
+    private boolean canResolveZipImage(Map<String, ZipImageData> zipImages, String imagePath) {
+        if (zipImages == null || zipImages.isEmpty() || imagePath == null || imagePath.isBlank()) {
+            return false;
+        }
+
+        String key = normalizeZipPath(imagePath);
+        if (zipImages.containsKey(key)) {
+            return true;
+        }
+
+        String fileName = key.contains("/") ? key.substring(key.lastIndexOf('/') + 1) : key;
+        String fileStem = fileName.contains(".") ? fileName.substring(0, fileName.lastIndexOf('.')) : fileName;
+
+        return zipImages.keySet().stream().anyMatch(candidate -> {
+            String candidateName = candidate.contains("/") ? candidate.substring(candidate.lastIndexOf('/') + 1) : candidate;
+            String candidateStem = candidateName.contains(".")
+                    ? candidateName.substring(0, candidateName.lastIndexOf('.'))
+                    : candidateName;
+            return candidateName.equals(fileName)
+                    || candidateStem.equals(fileStem)
+                    || candidate.endsWith("/" + fileName)
+                    || candidate.endsWith("/" + fileStem);
+        });
+    }
+
+    private boolean isLikelyImagePath(String value) {
+        if (value == null) return false;
+        String normalized = value.trim().toLowerCase(Locale.ROOT);
+        if (normalized.isBlank()) return false;
+
+        return normalized.endsWith(".png")
+                || normalized.endsWith(".jpg")
+                || normalized.endsWith(".jpeg")
+                || normalized.endsWith(".webp")
+                || normalized.endsWith(".gif")
+                || normalized.endsWith(".bmp")
+                || normalized.endsWith(".svg");
+    }
+
+    private String[] optionTextHeaderAliases(int index) {
+        return switch (index) {
+            case 0 -> new String[]{"option1", "option_a"};
+            case 1 -> new String[]{"option2", "option_b"};
+            case 2 -> new String[]{"option3", "option_c"};
+            case 3 -> new String[]{"option4", "option_d"};
+            default -> new String[0];
+        };
+    }
+
+    private List<String> readOptions(
+            Row row,
+            Map<String, Integer> headers,
+            Map<String, ZipImageData> zipImages,
+            Map<String, ZipImageData> embeddedImages,
+            int rowNum
+    ) {
+        List<String> options = new ArrayList<>(List.of("", "", "", ""));
+
+        for (int i = 0; i < options.size(); i++) {
+            String[] aliases = optionTextHeaderAliases(i);
+            String value = getCellString(getCellByHeaders(row, headers, aliases));
+            if (value.isBlank()) {
+                continue;
+            }
+
+            if (findEmbeddedImage(embeddedImages, row.getRowNum(), headers, aliases) != null) {
+                continue;
+            }
+
+            if (isImageReferenceValue(value, zipImages)) {
+                continue;
+            }
+
+            options.set(i, value);
+        }
+
+        for (int i = 0; i < options.size(); i++) {
+            if (isLikelyImagePath(options.get(i))) {
+                options.set(i, "");
+            }
+        }
+
+        boolean hasMultiColumnOptions = options.stream().anyMatch(v -> !v.isBlank());
+        if (hasMultiColumnOptions) {
+            return options;
+        }
+
+        String packed = getCellString(getCellByHeaders(row, headers, "options", "options_text", "option"));
+        if (packed.isBlank()) {
+            return options;
+        }
+
+        if (isLikelyImagePath(packed)) {
+            return options;
+        }
+
+        List<String> parsed = splitPackedOptions(packed);
+        if (parsed.size() != 4) {
+            throw new IllegalArgumentException(
+                    "Row " + (rowNum + 1) + ": options column must contain exactly 4 options " +
+                            "separated by newline, |, or ;");
+        }
+
+        return parsed;
+    }
+
+    private List<String> splitPackedOptions(String packed) {
+        String normalized = packed == null ? "" : packed.trim();
+        if (normalized.isBlank()) {
+            return List.of();
+        }
+
+        String delimiterRegex;
+        if (normalized.contains("\n") || normalized.contains("\r")) {
+            delimiterRegex = "\\r?\\n";
+        } else if (normalized.contains("|")) {
+            delimiterRegex = "\\|";
+        } else {
+            delimiterRegex = ";";
+        }
+
+        List<String> parts = new ArrayList<>();
+        for (String part : normalized.split(delimiterRegex)) {
+            String value = part.trim();
+            if (!value.isBlank()) {
+                parts.add(value);
+            }
+        }
+        return parts;
     }
 
     private Map<String, Integer> buildHeaderIndexMap(Row headerRow) {
@@ -505,6 +722,14 @@ public class QuestionService {
         }
         if (!headers.containsKey("correct") && !headers.containsKey("correct_option")) {
             throw new IllegalArgumentException("Excel header must contain 'correct' or 'correct_option'");
+        }
+
+        boolean hasMultiOptions = headers.containsKey("option1") || headers.containsKey("option_a");
+        boolean hasSingleOptions = headers.containsKey("options") || headers.containsKey("options_text") || headers.containsKey("option");
+        if (!hasMultiOptions && !hasSingleOptions) {
+            throw new IllegalArgumentException(
+                    "Excel header must contain either option1..option4 (or option_a..option_d), " +
+                            "or a single 'options'/'options_text'/'option' column");
         }
 
         return headers;
@@ -578,25 +803,47 @@ public class QuestionService {
 
     private Map<String, ZipImageData> extractEmbeddedImages(Sheet sheet) {
         Map<String, ZipImageData> embedded = new HashMap<>();
-        if (!(sheet instanceof XSSFSheet xssfSheet)) return embedded;
+        if (sheet instanceof XSSFSheet xssfSheet) {
+            XSSFDrawing drawing = xssfSheet.getDrawingPatriarch();
+            if (drawing == null) return embedded;
 
-        XSSFDrawing drawing = xssfSheet.getDrawingPatriarch();
-        if (drawing == null) return embedded;
+            for (XSSFShape shape : drawing.getShapes()) {
+                if (!(shape instanceof XSSFPicture picture)) continue;
+                if (!(picture.getAnchor() instanceof XSSFClientAnchor anchor)) continue;
 
-        for (XSSFShape shape : drawing.getShapes()) {
-            if (!(shape instanceof XSSFPicture picture)) continue;
-            if (!(picture.getAnchor() instanceof XSSFClientAnchor anchor)) continue;
+                int row = anchor.getRow1();
+                int col = anchor.getCol1();
+                if (row < 1 || col < 0) continue; // ignore header-row/unanchored artifacts
 
-            int row = anchor.getRow1();
-            int col = anchor.getCol1();
-            if (row < 1 || col < 0) continue; // ignore header-row/unanchored artifacts
+                XSSFPictureData data = picture.getPictureData();
+                if (data == null || data.getData() == null || data.getData().length == 0) continue;
 
-            XSSFPictureData data = picture.getPictureData();
-            if (data == null || data.getData() == null || data.getData().length == 0) continue;
+                String ext = data.suggestFileExtension();
+                String mime = detectMimeType(ext == null ? "" : ("file." + ext));
+                embedded.putIfAbsent(embeddedKey(row, col), new ZipImageData(data.getData(), mime));
+            }
+            return embedded;
+        }
 
-            String ext = data.suggestFileExtension();
-            String mime = detectMimeType(ext == null ? "" : ("file." + ext));
-            embedded.putIfAbsent(embeddedKey(row, col), new ZipImageData(data.getData(), mime));
+        if (sheet instanceof HSSFSheet hssfSheet) {
+            HSSFPatriarch drawing = hssfSheet.getDrawingPatriarch();
+            if (drawing == null) return embedded;
+
+            for (HSSFShape shape : drawing.getChildren()) {
+                if (!(shape instanceof HSSFPicture picture)) continue;
+                HSSFClientAnchor anchor = picture.getClientAnchor();
+                if (anchor == null) continue;
+
+                int row = anchor.getRow1();
+                int col = anchor.getCol1();
+                if (row < 1 || col < 0) continue; // ignore header-row/unanchored artifacts
+
+                HSSFPictureData data = picture.getPictureData();
+                if (data == null || data.getData() == null || data.getData().length == 0) continue;
+
+                String mime = data.getMimeType();
+                embedded.putIfAbsent(embeddedKey(row, col), new ZipImageData(data.getData(), mime));
+            }
         }
 
         return embedded;
@@ -606,11 +853,15 @@ public class QuestionService {
             Map<String, ZipImageData> embeddedImages,
             int rowNum,
             Map<String, Integer> headers,
-            String headerName
+            String... headerNames
     ) {
-        Integer col = headers.get(normalizeHeader(headerName));
-        if (col == null) return null;
-        return embeddedImages.get(embeddedKey(rowNum, col));
+        for (String headerName : headerNames) {
+            Integer col = headers.get(normalizeHeader(headerName));
+            if (col == null) continue;
+            ZipImageData image = embeddedImages.get(embeddedKey(rowNum, col));
+            if (image != null) return image;
+        }
+        return null;
     }
 
     private String detectMimeType(String path) {

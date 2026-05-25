@@ -6,6 +6,7 @@ import org.springframework.security.core.GrantedAuthority;
 import org.springframework.security.core.authority.SimpleGrantedAuthority;
 import org.springframework.security.core.userdetails.UserDetails;
 
+import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.Collection;
 import java.util.List;
@@ -35,6 +36,22 @@ public class User implements UserDetails {
 
     @Column(nullable = false)
     private String fullName;
+
+    @Column(name = "enrollment_no", unique = true)
+    private String enrollmentNo;
+
+    private String stream;
+
+    private String section;
+
+    @Column(name = "student_year")
+    private String studentYear;
+
+    @Column(name = "class_roll_no")
+    private String classRollNo;
+
+    @Column(name = "date_of_birth")
+    private LocalDate dateOfBirth;
 
     @Enumerated(EnumType.STRING)
     @Column(nullable = false)

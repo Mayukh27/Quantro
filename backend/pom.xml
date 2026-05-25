@@ -12,9 +12,9 @@
     </parent>
 
     <groupId>com.examportal</groupId>
-    <artifactId>exam-portal-server</artifactId>
+    <artifactId>quantro-server</artifactId>
     <version>1.0.0</version>
-    <name>exam-portal-server</name>
+    <name>quantro-server</name>
     <description>Online Examination System - Backend Server</description>
     <packaging>jar</packaging>
 

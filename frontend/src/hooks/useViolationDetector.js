@@ -151,19 +151,19 @@ showSnackbar
         }
     };
 
-    // ── MOUSE LEAVE ─────────────────────────────────────────────
+    // ── MOUSE LEAVE ───────────────────────────────────────────── [DISABLED]
     // Debounced 2s — moving the mouse off the page momentarily is common
-    const onMouseLeave = () => {
-      mouseLeaveTimerRef.current = setTimeout(() => {
-        report('MOUSE_LEAVE', 'Mouse left the document window');
-      }, 2000);
-    };
-    const onMouseEnter = () => {
-      if (mouseLeaveTimerRef.current) {
-        clearTimeout(mouseLeaveTimerRef.current);
-        mouseLeaveTimerRef.current = null;
-      }
-    };
+    // const onMouseLeave = () => {
+    //   mouseLeaveTimerRef.current = setTimeout(() => {
+    //     report('MOUSE_LEAVE', 'Mouse left the document window');
+    //   }, 2000);
+    // };
+    // const onMouseEnter = () => {
+    //   if (mouseLeaveTimerRef.current) {
+    //     clearTimeout(mouseLeaveTimerRef.current);
+    //     mouseLeaveTimerRef.current = null;
+    //   }
+    // };
 
     // ── DEVTOOLS DETECTION (size heuristic, every 3s) ──────────
     const checkDevtools = () => {
@@ -185,8 +185,8 @@ showSnackbar
     document.addEventListener('paste', onPaste);
     document.addEventListener('contextmenu', onCtx);
     document.addEventListener('keydown', onKey);
-    document.addEventListener('mouseleave', onMouseLeave);
-    document.addEventListener('mouseenter', onMouseEnter);
+    // document.addEventListener('mouseleave', onMouseLeave); [DISABLED]
+    // document.addEventListener('mouseenter', onMouseEnter); [DISABLED]
 
     return () => {
       document.removeEventListener('visibilitychange', onVis);
@@ -197,7 +197,7 @@ showSnackbar
       document.removeEventListener('paste', onPaste);
       document.removeEventListener('contextmenu', onCtx);
       document.removeEventListener('keydown', onKey);
-      document.removeEventListener('mouseleave', onMouseLeave);
+      // document.removeEventListener('mouseleave', onMouseLeave); [DISABLED]
       document.removeEventListener('mouseenter', onMouseEnter);
       if (devtoolsCheckRef.current) clearInterval(devtoolsCheckRef.current);
       if (mouseLeaveTimerRef.current) clearTimeout(mouseLeaveTimerRef.current);

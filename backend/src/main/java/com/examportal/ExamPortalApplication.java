@@ -12,13 +12,26 @@ public class ExamPortalApplication {
 
         Dotenv dotenv = Dotenv.load();
 
-        System.setProperty("JWT_SECRET", dotenv.get("JWT_SECRET"));
-        System.setProperty("DB_URL", dotenv.get("DB_URL"));
-        System.setProperty("DB_USERNAME", dotenv.get("DB_USERNAME"));
-        System.setProperty("DB_PASSWORD", dotenv.get("DB_PASSWORD"));
-        System.setProperty("MAIL_USERNAME", dotenv.get("MAIL_USERNAME"));
-        System.setProperty("MAIL_PASSWORD", dotenv.get("MAIL_PASSWORD"));
+        setIfPresent(dotenv, "JWT_SECRET");
+        setIfPresent(dotenv, "DB_URL");
+        setIfPresent(dotenv, "DB_USERNAME");
+        setIfPresent(dotenv, "DB_PASSWORD");
+        setIfPresent(dotenv, "MAIL_USERNAME");
+        setIfPresent(dotenv, "MAIL_PASSWORD");
+
+        setIfPresent(dotenv, "PREFETCH_ENABLED");
+        setIfPresent(dotenv, "PREFETCH_BASE_URL");
+        setIfPresent(dotenv, "PREFETCH_CONNECT_TIMEOUT_MS");
+        setIfPresent(dotenv, "PREFETCH_READ_TIMEOUT_MS");
+        setIfPresent(dotenv, "PREFETCH_MAX_CONCURRENCY");
 
         SpringApplication.run(ExamPortalApplication.class, args);
+    }
+
+    private static void setIfPresent(Dotenv dotenv, String key) {
+        String value = dotenv.get(key);
+        if (value != null && !value.isBlank()) {
+            System.setProperty(key, value);
+        }
     }
 }

@@ -63,10 +63,13 @@ public class AttemptService {
         Collections.shuffle(shuffledIds);
 
         Map<String, Map<Integer, Integer>> optionOrderMap = new HashMap<>();
+        boolean shuffleOptions = exam.getBlueprint() == null || Boolean.TRUE.equals(exam.getBlueprint().getOptionShuffle());
         for (Long qId : shuffledIds) {
             Question q = questionService.getEntityById(qId);
             List<Integer> indices = IntStream.range(0, q.getOptions().size()).boxed().collect(Collectors.toList());
-            Collections.shuffle(indices);
+            if (shuffleOptions) {
+                Collections.shuffle(indices);
+            }
             Map<Integer, Integer> mapping = new HashMap<>();
             for (int displayIndex = 0; displayIndex < indices.size(); displayIndex++) {
                 mapping.put(displayIndex, indices.get(displayIndex));

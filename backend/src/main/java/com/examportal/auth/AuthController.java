@@ -1,6 +1,7 @@
 package com.examportal.auth;
 
 import com.examportal.common.ApiResponse;
+import io.jsonwebtoken.JwtException;
 import jakarta.validation.Valid;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
@@ -8,7 +9,6 @@ import org.springframework.web.bind.annotation.*;
 
 import com.examportal.user.User;
 import com.examportal.user.UserRepository;
-import org.springframework.security.core.Authentication;
 
 /**
  * AuthController - Public authentication endpoints.
@@ -38,14 +38,18 @@ public class AuthController {
             @RequestHeader(value = "Authorization", required = false) String authHeader) {
 
         if (authHeader != null && authHeader.startsWith("Bearer ")) {
-            String jwt = authHeader.substring(7);
-            String email = jwtService.extractUsername(jwt);
-            User user = userRepository.findByEmail(email)
-                    .orElse(null);
-            if (user != null) {
-                user.setLoggedIn(false);
-                user.setSessionToken(null);
-                userRepository.save(user);
+            try {
+                String jwt = authHeader.substring(7);
+                String email = jwtService.extractUsername(jwt);
+                User user = userRepository.findByEmail(email)
+                        .orElse(null);
+                if (user != null) {
+                    user.setLoggedIn(false);
+                    user.setSessionToken(null);
+                    userRepository.save(user);
+                }
+            } catch (JwtException | IllegalArgumentException ignored) {
+                // Keep logout idempotent and avoid leaking token parsing errors.
             }
         }
         return ResponseEntity.ok(ApiResponse.success("Logout successful", null));
