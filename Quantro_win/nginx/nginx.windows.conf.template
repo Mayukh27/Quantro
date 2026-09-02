@@ -1,0 +1,205 @@
+worker_processes 1;
+
+pid         logs/nginx.pid;
+error_log   logs/nginx.error.log warn;
+
+events {
+    worker_connections 1024;
+}
+
+http {
+
+    default_type application/octet-stream;
+
+    types {
+        text/html                   html htm;
+        text/css                    css;
+        application/javascript      js mjs;
+        application/json            json;
+        image/png                   png;
+        image/jpeg                  jpg jpeg;
+        image/gif                   gif;
+        image/webp                  webp;
+        image/svg+xml               svg svgz;
+        image/x-icon                ico;
+        font/woff                   woff;
+        font/woff2                  woff2;
+        application/pdf             pdf;
+    }
+
+    sendfile          on;
+    keepalive_timeout 65;
+    server_tokens     off;
+
+    gzip            on;
+    gzip_vary       on;
+    gzip_comp_level 5;
+    gzip_min_length 256;
+    gzip_proxied    any;
+    gzip_types      text/plain text/css application/javascript application/json image/svg+xml font/woff2;
+
+    client_body_temp_path   temp/client_body_temp;
+    proxy_temp_path         temp/proxy_temp;
+    fastcgi_temp_path       temp/fastcgi_temp;
+    scgi_temp_path          temp/scgi_temp;
+    uwsgi_temp_path         temp/uwsgi_temp;
+
+    proxy_cache_path cache/images
+        levels=1:2
+        keys_zone=image_cache:20m
+        max_size=2g
+        inactive=30d
+        use_temp_path=off;
+
+    access_log logs/nginx.access.log;
+
+    proxy_http_version      1.1;
+    proxy_set_header        Connection        "";
+    proxy_set_header        Host              $host;
+    proxy_set_header        X-Real-IP         $remote_addr;
+    proxy_set_header        X-Forwarded-For   $proxy_add_x_forwarded_for;
+    proxy_set_header        X-Forwarded-Proto $scheme;
+    proxy_connect_timeout   15s;
+    proxy_send_timeout      60s;
+    proxy_read_timeout      60s;
+    proxy_buffer_size       16k;
+    proxy_buffers           8 32k;
+    proxy_busy_buffers_size 64k;
+
+    upstream backend_pool {
+        server 127.0.0.1:18080;
+        keepalive 32;
+    }
+
+    server {
+        listen       NGINX_PORT;
+        server_name  _;
+
+        client_max_body_size 50m;
+
+        # QUANTRO_ROOT is replaced by start.ps1 with the absolute path
+        # e.g. C:/Users/Mayukh/Desktop/Online_Exam_System v-2/Quantro_win
+        # Forward slashes are used - nginx on Windows accepts them fine.
+
+        # ---------- 1. React /static/ assets - immutable 1yr cache ----------
+        location ~* ^/static/ {
+            root        "QUANTRO_ROOT/build";
+            expires     365d;
+            add_header  Cache-Control "public, immutable";
+            access_log  off;
+        }
+
+        # ---------- 2. Root-level files (favicon, logo, manifest, etc.) -----
+        # Served directly from the build folder by absolute path.
+        # No try_files - avoids any possibility of redirect loops.
+        location ~* \.(ico|png|jpg|jpeg|gif|webp|svg|woff|woff2|json|txt|xml)$ {
+            root        "QUANTRO_ROOT/build";
+            expires     30d;
+            add_header  Cache-Control "public, max-age=2592000";
+            access_log  off;
+        }
+
+        # ---------- 3. Question body image - nginx cache (bypasses DB) -------
+        location ~ ^/(api/)?questions/(\d+)/image$ {
+            proxy_pass                    http://backend_pool;
+            proxy_cache                   image_cache;
+            proxy_cache_valid             200 30d;
+            proxy_cache_valid             404 2m;
+            proxy_cache_valid             any 1m;
+            proxy_cache_key               "$scheme$host$uri";
+            proxy_cache_lock              on;
+            proxy_cache_lock_timeout      5s;
+            proxy_cache_use_stale         error timeout updating http_500 http_502 http_503 http_504;
+            proxy_cache_background_update on;
+            expires                       365d;
+            add_header Cache-Control      "public, immutable" always;
+            add_header X-Cache-Status     $upstream_cache_status always;
+            access_log off;
+        }
+
+        # ---------- 4. Combined option image - nginx cache -------------------
+        location ~ ^/(api/)?questions/(\d+)/combined-option-image$ {
+            proxy_pass                    http://backend_pool;
+            proxy_cache                   image_cache;
+            proxy_cache_valid             200 30d;
+            proxy_cache_valid             404 2m;
+            proxy_cache_valid             any 1m;
+            proxy_cache_key               "$scheme$host$uri";
+            proxy_cache_lock              on;
+            proxy_cache_lock_timeout      5s;
+            proxy_cache_use_stale         error timeout updating http_500 http_502 http_503 http_504;
+            proxy_cache_background_update on;
+            expires                       365d;
+            add_header Cache-Control      "public, immutable" always;
+            add_header X-Cache-Status     $upstream_cache_status always;
+            access_log off;
+        }
+
+        # ---------- 5. Per-option images - nginx cache -----------------------
+        location ~ ^/(api/)?questions/(\d+)/option-image/(\d+)$ {
+            proxy_pass                    http://backend_pool;
+            proxy_cache                   image_cache;
+            proxy_cache_valid             200 30d;
+            proxy_cache_valid             404 2m;
+            proxy_cache_valid             any 1m;
+            proxy_cache_key               "$scheme$host$uri";
+            proxy_cache_lock              on;
+            proxy_cache_lock_timeout      5s;
+            proxy_cache_use_stale         error timeout updating http_500 http_502 http_503 http_504;
+            proxy_cache_background_update on;
+            expires                       365d;
+            add_header Cache-Control      "public, immutable" always;
+            add_header X-Cache-Status     $upstream_cache_status always;
+            access_log off;
+        }
+
+        # ---------- 6. Backend API routes - no cache -------------------------
+        location ~ ^/(api/|auth/|questions(/|$)|attempts(/|$)|results(/|$)|admin(/|$)|subjects(/|$)|blueprints(/|$)|exams(/|$)|proctor(/|$)|report(/|$)|analytics(/|$)) {
+            proxy_pass http://backend_pool;
+        }
+
+        # ---------- 7. Health check ------------------------------------------
+        location = /health {
+            proxy_pass  http://backend_pool/actuator/health;
+            access_log  off;
+        }
+
+        # ---------- 8. SPA - serve index.html by absolute alias --------------
+        #
+        # THE FIX FOR "rewrite or internal redirection cycle":
+        #
+        # On Windows nginx, try_files $uri /index.html causes an infinite loop
+        # because the fallback /index.html re-enters location / as a new internal
+        # request, which falls back again, forever.
+        #
+        # The solution is to NOT use try_files at all for the fallback.
+        # Instead we use TWO locations:
+        #
+        #   location / - tries to serve the file as a real static file.
+        #                If found, nginx serves it from the build folder.
+        #                If NOT found (404), nginx invokes error_page 404
+        #                which internally redirects to @spa - a named location.
+        #
+        #   location @spa - named locations are FINAL. nginx never re-enters
+        #                   the routing table from a named location.
+        #                   We use `alias` with the full absolute path to
+        #                   index.html so there is no further routing at all.
+        #
+        # This pattern works on Windows nginx without loops or redirects.
+
+        error_page 404 = @spa;
+
+        location / {
+            root  "QUANTRO_ROOT/build";
+            # Try to serve as a real file. 404 falls to @spa above.
+            try_files $uri =404;
+        }
+
+        location @spa {
+            add_header   Cache-Control "no-store" always;
+            default_type text/html;
+            root  "QUANTRO_ROOT/build";
+            rewrite ^ /index.html break;
+        }
+    }
+}

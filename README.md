@@ -1,6 +1,6 @@
-# Quantro — Online Examination System 
+# ExamPortal — LAN-Based Online Examination System
 
-A secure, online examination platform with real-time proctoring, blueprint-driven exam generation, and scalable multi-user support.
+A secure, LAN-based online examination platform with real-time proctoring, blueprint-driven exam generation, and scalable multi-user support.
 
 Designed for institutions to conduct exams over a local network (LAN) without requiring internet connectivity.
 
@@ -54,6 +54,7 @@ Designed for institutions to conduct exams over a local network (LAN) without re
 **Teacher**
 - Upload questions manually or via `.xlsx` bulk upload (Apache POI)
 - Browse and manage per-subject question bank
+- Clear a subject question bank (permanent database delete with confirmation)
 - View exam results for all assigned exams
 
 **Student**
@@ -291,8 +292,9 @@ If you use image paths in these columns, send the Excel file together with an op
 | POST | `/attempts/{id}/submit` | STUDENT | Submit exam |
 | GET | `/results/{attemptId}` | STUDENT | View own result |
 | GET | `/results/pdf/{attemptId}` | STUDENT | Download result PDF |
-| POST | `/questions` | TEACHER | Upload single question |
-| POST | `/questions/excel` | TEACHER | Bulk upload via xlsx |
+| POST | `/questions` | ADMIN/TEACHER | Upload single question |
+| POST | `/questions/excel` | ADMIN/TEACHER | Bulk upload via xlsx |
+| DELETE | `/questions/subject/{subjectId}` | ADMIN/TEACHER | Clear all questions for a subject (hard delete) |
 | POST | `/blueprints` | ADMIN | Create blueprint |
 | POST | `/exams` | ADMIN | Create exam |
 | POST | `/exams/{id}/publish` | ADMIN | Publish exam |

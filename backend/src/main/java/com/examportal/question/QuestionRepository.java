@@ -11,7 +11,9 @@ import java.util.List;
 @Repository
 public interface QuestionRepository extends JpaRepository<Question, Long> {
 
+    List<Question> findBySubjectId(Long subjectId);
     List<Question> findBySubjectIdAndActive(Long subjectId, boolean active);
+    long countBySubjectId(Long subjectId);
     long countBySubjectIdAndActive(Long subjectId, boolean active);
 
     @Query(value = "SELECT * FROM questions WHERE subject_id = :subjectId AND active = true ORDER BY RANDOM()", nativeQuery = true)
@@ -31,5 +33,5 @@ public interface QuestionRepository extends JpaRepository<Question, Long> {
     /** CHANGE: Used by SubjectService.delete() to cascade question removal */
     @Modifying
     @Query("DELETE FROM Question q WHERE q.subject.id = :subjectId")
-    void deleteBySubjectId(Long subjectId);
+    int deleteBySubjectId(Long subjectId);
 }

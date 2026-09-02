@@ -1,0 +1,119 @@
+QUANTRO LINUX - STEP BY STEP TUTORIAL
+====================================
+
+1. Install prerequisites
+------------------------
+1) Install Java 17+
+   - On Ubuntu/Debian:
+     sudo apt update
+     sudo apt install -y openjdk-17-jdk
+   - Verify:
+     java -version
+
+2) Install PostgreSQL 14+
+   - On Ubuntu/Debian:
+     sudo apt install -y postgresql postgresql-contrib
+   - Start and enable the service:
+     sudo systemctl enable postgresql
+     sudo systemctl start postgresql
+   - Create a database and user if needed.
+
+3) Install nginx
+   - On Ubuntu/Debian:
+     sudo apt install -y nginx
+   - Verify:
+     nginx -V
+
+2. Prepare the app configuration
+--------------------------------
+1) Open the Quantro-linux folder.
+2) Copy the env template if needed:
+   - If you do not already have .env, create it from the sample values used by the app.
+3) Edit .env and set at least:
+   - DB_URL=jdbc:postgresql://127.0.0.1:5432/YOUR_DB_NAME
+   - DB_USERNAME=your_postgres_user
+   - DB_PASSWORD=your_postgres_password
+   - JWT_SECRET=a_long_random_secret
+   - NGINX_BIN=/usr/sbin/nginx
+   - JAVA_BIN=/usr/bin/java
+4) Save the file.
+
+3. Start the application
+------------------------
+Run:
+  chmod +x ./run.sh ./start.sh ./stop.sh
+  ./run.sh
+
+Wait around 20-30 seconds for the backend and nginx to start.
+
+4. Open the app
+---------------
+Open your browser and visit:
+  http://localhost/
+
+5. Create an admin account
+--------------------------
+You can create the first admin in either of these two ways.
+
+Method A: Use psql
+1) Connect to PostgreSQL:
+   sudo -u postgres psql
+2) Connect to your app database:
+   \c your_database_name
+3) Run:
+
+   INSERT INTO users (
+     email,
+     password,
+     full_name,
+     role,
+     approved,
+     enabled,
+     created_at,
+     updated_at
+   ) VALUES (
+     'admin@example.com',
+     crypt('Admin@1234', gen_salt('bf')),
+     'System Admin',
+     'ADMIN',
+     true,
+     true,
+     NOW(),
+     NOW()
+   );
+
+4) The password will be stored as a proper bcrypt hash.
+
+Method B: Use pgAdmin if you installed it
+1) Open pgAdmin and connect to the PostgreSQL server.
+2) Open the app database.
+3) Run the same SQL statement shown above.
+
+Method C: Use curl to create the admin through the app API
+1) Make sure the app is running.
+2) Run this command:
+
+   curl -X POST http://localhost/auth/register -H "Content-Type: application/json" -d '{"email":"admin@example.com","password":"Admin@1234","fullName":"System Admin","role":"ADMIN"}'
+
+3) If the API responds successfully, the admin account will be created.
+4) Then log in with:
+   - Email: admin@example.com
+   - Password: Admin@1234
+
+Important notes
+---------------
+- The app expects the users table to match the current backend model.
+- Passwords are stored with bcrypt hashing.
+- The first admin login can be created directly with SQL when the UI is not yet available, and the curl method works well when the application is already running.
+
+6. Log in
+---------
+1) Open the app login page.
+2) Sign in with:
+   - Email: admin@example.com
+   - Password: Admin@1234
+
+7. Stop the app
+---------------
+Run:
+  ./stop.sh

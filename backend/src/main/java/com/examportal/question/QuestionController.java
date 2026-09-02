@@ -11,6 +11,7 @@ import org.springframework.security.core.userdetails.UserDetails;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.multipart.MultipartFile;
 
+import java.util.Map;
 import java.util.List;
 
 /**
@@ -60,6 +61,17 @@ public class QuestionController {
     @PreAuthorize("hasAnyRole('ADMIN', 'TEACHER')")
     public ResponseEntity<ApiResponse<List<QuestionDTO>>> getBySubject(@PathVariable Long subjectId) {
         return ResponseEntity.ok(ApiResponse.success(questionService.findBySubject(subjectId)));
+    }
+
+    // ── Clear question bank for a subject (hard delete) ─────────────────
+    @DeleteMapping("/subject/{subjectId}")
+    @PreAuthorize("hasAnyRole('ADMIN', 'TEACHER')")
+    public ResponseEntity<ApiResponse<Map<String, Object>>> clearQuestionBankBySubject(@PathVariable Long subjectId) {
+        int deleted = questionService.clearQuestionBankBySubject(subjectId);
+        return ResponseEntity.ok(ApiResponse.success(
+                "Question bank cleared.",
+                Map.of("subjectId", subjectId, "deleted", deleted)
+        ));
     }
 
     // ── Single question upload (multipart) ────────────────────────────────

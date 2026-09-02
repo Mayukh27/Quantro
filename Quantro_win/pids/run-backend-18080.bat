@@ -1,0 +1,3 @@
+@echo off
+"C:\Program Files\Java\jdk-17\bin\java.exe" -Xms512m -Xmx1024m -Dfeatures.admin=true -Dfeatures.teacher=true -Dfeatures.analytics=true -Dfeatures.blueprint=true -Dfeatures.proctor=true -Dfeatures.pdf=true -Dfeatures.ai=false -Dfeatures.email=false -Dexam.proctor.max-violations=1 -Dexam.proctor.max-fullscreen-exits=1 -Dexam.proctor.fullscreen-grace-seconds=10 -Dexam.timer.grace-period-seconds=30 -jar "C:\Users\Mayukh\Desktop\Online_Exam_System v-3\Quantro_win\app.jar" --server.port=18080 >> "C:\Users\Mayukh\Desktop\Online_Exam_System v-3\Quantro_win\logs\backend-18080.log" 2>> "C:\Users\Mayukh\Desktop\Online_Exam_System v-3\Quantro_win\logs\backend-18080.err.log"
+

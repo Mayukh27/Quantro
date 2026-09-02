@@ -961,6 +961,19 @@ public class QuestionService {
         return questionRepository.findBySubjectIdAndActive(subjectId, true);
     }
 
+    @Transactional
+    public int clearQuestionBankBySubject(Long subjectId) {
+        // Validate subject first so callers get a clear error for invalid IDs.
+        subjectService.getEntityById(subjectId);
+        List<Question> questions = questionRepository.findBySubjectId(subjectId);
+        int deleted = questions.size();
+        if (deleted == 0) return 0;
+
+        // Delete managed entities so JPA cascades remove option text and image rows.
+        questionRepository.deleteAll(questions);
+        return deleted;
+    }
+
     public List<QuestionDTO> findByIds(List<Long> ids, boolean includeAnswer) {
         return questionRepository.findAllById(ids)
                 .stream()

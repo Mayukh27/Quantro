@@ -1,0 +1,435 @@
+import React, { useEffect, useState, useCallback, useRef } from 'react';
+import { useNavigate } from 'react-router-dom';
+import { useAuth } from '../context/AuthContext';
+import { getSubjects, getQuestions } from '../api/adminApi';
+import BrandLogo from '../components/BrandLogo';
+import api from '../api/axiosConfig';
+import ExamResultsViewer from '../components/ExamResultsViewer';
+import Spinner from '../components/Spinner';
+import { runLogoutFlow } from '../utils/authSession';
+
+// ─────────────────────────────────────────────────────────────
+// SIDEBAR NAV  (replace your existing nav tab list with this)
+// ─────────────────────────────────────────────────────────────
+//
+// Add 'QuestionBank' to your existing teacherTabs array, e.g.:
+//   const teacherTabs = [
+//     { key: 'Results',      label: 'Results'       },
+//     { key: 'QuestionBank', label: 'Question Bank'  },
+//     // ...other tabs
+//   ];
+//
+// Add state:
+//   const [questionBankSubTab, setQuestionBankSubTab] = useState('bulk');
+//   const [subjectsOpen, setSubjectsOpen]             = useState(false);
+//
+// ─────────────────────────────────────────────────────────────
+// SIDEBAR SECTION  – paste inside your sidebar <div>
+// ─────────────────────────────────────────────────────────────
+
+const SidebarQuestionBankSection = ({
+  teacherTab,
+  setTeacherTab,
+  subjectsOpen,
+  setSubjectsOpen,
+  subjects,
+  selectedSubject,
+  selectSubject,
+}) => (
+  <>
+    {/* ── Question Bank main tab button ── */}
+    <button
+      onClick={() => setTeacherTab('QuestionBank')}
+      style={{
+        width: '100%',
+        textAlign: 'left',
+        padding: '11px 16px',
+        border: 'none',
+        borderBottom: '1px solid var(--border-light)',
+        cursor: 'pointer',
+        background: teacherTab === 'QuestionBank' ? 'var(--primary-light)' : 'transparent',
+        color: teacherTab === 'QuestionBank' ? 'var(--primary)' : 'var(--text-primary)',
+        fontWeight: teacherTab === 'QuestionBank' ? 700 : 500,
+        fontSize: 13,
+        display: 'flex',
+        alignItems: 'center',
+        gap: 8,
+      }}
+    >
+      {/* small upload icon */}
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+        <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+        <polyline points="17 8 12 3 7 8"/>
+        <line x1="12" y1="3" x2="12" y2="15"/>
+      </svg>
+      Question Bank
+    </button>
+
+    {/* ── Subjects collapsible (only visible when QuestionBank tab is active) ── */}
+    {teacherTab === 'QuestionBank' && (
+      <div>
+        <button
+          onClick={() => setSubjectsOpen(o => !o)}
+          style={{
+            width: '100%',
+            textAlign: 'left',
+            padding: '9px 16px 9px 28px',
+            border: 'none',
+            borderBottom: '1px solid var(--border-light)',
+            cursor: 'pointer',
+            background: '#f8fafc',
+            fontWeight: 600,
+            fontSize: 11,
+            color: 'var(--text-secondary)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            letterSpacing: '0.04em',
+            textTransform: 'uppercase',
+          }}
+        >
+          Subjects
+          <span style={{ fontSize: 10, marginRight: 4 }}>{subjectsOpen ? '▾' : '▸'}</span>
+        </button>
+
+        {subjectsOpen && subjects.map(s => (
+          <button
+            key={s.id}
+            onClick={() => {
+              selectSubject(s);
+              // Switch to subject-wise sub-tab so main content shows subject page
+              // (the caller should set questionBankSubTab to 'subject' here too if needed)
+            }}
+            style={{
+              width: '100%',
+              textAlign: 'left',
+              padding: '9px 16px 9px 36px',
+              border: 'none',
+              borderBottom: '1px solid var(--border-light)',
+              cursor: 'pointer',
+              background: selectedSubject?.id === s.id ? 'var(--primary-light)' : 'transparent',
+              color: selectedSubject?.id === s.id ? 'var(--primary)' : 'var(--text-primary)',
+              fontWeight: selectedSubject?.id === s.id ? 700 : 400,
+              fontSize: 12,
+              transition: 'background 0.15s',
+            }}
+          >
+            <div style={{ fontWeight: 'inherit' }}>{s.name}</div>
+            <div style={{ fontSize: 10, color: 'var(--text-muted)', marginTop: 1 }}>{s.code}</div>
+          </button>
+        ))}
+      </div>
+    )}
+  </>
+);
+
+
+// ─────────────────────────────────────────────────────────────
+// MAIN CONTENT  – paste inside your main content <div>
+// Replace the entire {teacherTab === 'QuestionBank' && ( ... )} block
+// ─────────────────────────────────────────────────────────────
+
+const QuestionBankMainContent = ({
+  // sub-tab state
+  questionBankSubTab,        // 'bulk' | 'subject'
+  setQuestionBankSubTab,
+
+  // file upload state
+  questionFile, setQuestionFile,
+  imageZipFile, setImageZipFile,
+  excelInputRef, imageZipInputRef,
+  handleUploadQuestions,
+  msg,
+
+  // subject selection
+  subjects,
+  selectedSubject,
+  selectSubject,
+
+  // subject page (single Q upload + question bank list)
+  // — shown only when a subject is selected via the Subject-wise sub-tab
+  SubjectPageContent,        // pass the existing subject-page JSX as a component
+}) => (
+  <div>
+    {/* ── Sub-tab pill row ── */}
+    <div style={{ display: 'flex', gap: 6, marginBottom: 20 }}>
+      {[
+        { key: 'bulk',    label: '📂  Question Bank Upload'  },
+        { key: 'subject', label: '📚  Subject-wise Upload'   },
+      ].map(t => (
+        <button
+          key={t.key}
+          onClick={() => {
+            setQuestionBankSubTab(t.key);
+            if (t.key === 'bulk') selectSubject(null); // clear subject when switching to bulk
+          }}
+          style={{
+            padding: '8px 16px',
+            border: '1.5px solid',
+            borderColor: questionBankSubTab === t.key ? 'var(--primary)' : 'var(--border)',
+            borderRadius: 8,
+            background: questionBankSubTab === t.key ? 'var(--primary-light)' : '#fff',
+            color: questionBankSubTab === t.key ? 'var(--primary)' : 'var(--text-secondary)',
+            fontWeight: questionBankSubTab === t.key ? 700 : 500,
+            cursor: 'pointer',
+            fontSize: 12,
+            transition: 'all 0.15s',
+          }}
+        >
+          {t.label}
+        </button>
+      ))}
+    </div>
+
+    {/* ══════════════════════════════════════════════════════
+        SUB-TAB A : Question Bank Upload  (bulk / mixed)
+    ══════════════════════════════════════════════════════ */}
+    {questionBankSubTab === 'bulk' && (
+      <div style={{ background: '#fff', borderRadius: 10, boxShadow: 'var(--shadow-sm)', marginBottom: 20 }}>
+        <div style={{ padding: '16px 20px', borderBottom: '1px solid var(--border)' }}>
+          <h3 style={{ fontSize: 15, fontWeight: 700, margin: 0 }}>Mixed-Subject Bulk Upload</h3>
+          <p style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 6, marginBottom: 0 }}>
+            Upload one Excel containing multiple subjects. Use column A as Subject ID or Subject Code.
+            Questions are saved under their respective subjects and will appear when you select a subject.
+          </p>
+        </div>
+        <div style={{ padding: 20 }}>
+          <p style={{ fontSize: 12, color: 'var(--text-muted)', marginBottom: 12 }}>
+            Supported modes: (1) Excel only (.xls/.xlsx/.xlsm/.xltx/.xltm), (2) Excel + image ZIP, (3) single ZIP bundle containing one Excel and image folders.
+          </p>
+
+          <input
+            ref={excelInputRef}
+            data-excel="1"
+            type="file"
+            accept=".xls,.xlsx,.xlsm,.xltx,.xltm,.zip"
+            onChange={e => { setQuestionFile(e.target.files[0] || null); }}
+            style={{ fontSize: 13, marginBottom: 8, display: 'block' }}
+          />
+
+          {questionFile && (
+            <div style={{ fontSize: 12, color: 'var(--text-muted)', marginBottom: 8 }}>
+              Primary file: {questionFile.name} ({(questionFile.size / 1024).toFixed(1)} KB)
+            </div>
+          )}
+
+          {questionFile && questionFile.name.toLowerCase().endsWith('.xlsx') && (
+            <>
+              <input
+                ref={imageZipInputRef}
+                type="file"
+                accept=".zip"
+                onChange={e => { setImageZipFile(e.target.files[0] || null); }}
+                style={{ fontSize: 13, marginBottom: 8, display: 'block' }}
+              />
+              <div style={{ fontSize: 11, color: 'var(--text-muted)', marginBottom: 8 }}>
+                Optional: image ZIP for Excel image path columns (`question_image`, `option1_image`…`option4_image`, `combined_option_image`).
+              </div>
+            </>
+          )}
+
+          {imageZipFile && (
+            <div style={{ fontSize: 12, color: 'var(--text-muted)', marginBottom: 8 }}>
+              Image ZIP: {imageZipFile.name} ({(imageZipFile.size / 1024).toFixed(1)} KB)
+            </div>
+          )}
+
+          <button
+            onClick={handleUploadQuestions}
+            disabled={!questionFile}
+            style={{
+              padding: '9px 20px',
+              background: 'var(--primary)',
+              color: '#fff',
+              border: 'none',
+              borderRadius: 6,
+              fontWeight: 600,
+              cursor: questionFile ? 'pointer' : 'not-allowed',
+              opacity: questionFile ? 1 : 0.5,
+              fontSize: 13,
+            }}
+          >
+            Upload Bulk File
+          </button>
+
+          {msg && (
+            <div style={{
+              marginTop: 12, padding: '8px 14px', borderRadius: 6, fontSize: 13,
+              background: msg.startsWith('✓') ? '#f0fdf4' : '#fef2f2',
+              color: msg.startsWith('✓') ? 'var(--success)' : 'var(--danger)',
+              border: '1px solid ' + (msg.startsWith('✓') ? '#bbf7d0' : '#fecaca'),
+            }}>
+              {msg}
+            </div>
+          )}
+        </div>
+      </div>
+    )}
+
+    {/* ══════════════════════════════════════════════════════
+        SUB-TAB B : Subject-wise Upload
+        – shows a subject picker dropdown
+        – selecting a subject loads that subject's page
+          (which already contains single-Q upload + question bank list)
+    ══════════════════════════════════════════════════════ */}
+    {questionBankSubTab === 'subject' && (
+      <div>
+        {/* Subject picker card */}
+        <div style={{
+          background: '#fff', borderRadius: 10, boxShadow: 'var(--shadow-sm)',
+          padding: '18px 20px', marginBottom: 24,
+          display: 'flex', alignItems: 'center', gap: 16, flexWrap: 'wrap',
+        }}>
+          <label style={{ fontSize: 13, fontWeight: 700, color: 'var(--text-secondary)', whiteSpace: 'nowrap' }}>
+            Select Subject
+          </label>
+          <select
+            value={selectedSubject?.id || ''}
+            onChange={e => {
+              const subj = subjects.find(s => s.id === Number(e.target.value));
+              if (subj) selectSubject(subj);
+            }}
+            style={{
+              flex: '0 0 320px',
+              padding: '9px 12px',
+              border: '1.5px solid var(--border)',
+              borderRadius: 7,
+              fontSize: 13,
+              color: 'var(--text-primary)',
+              background: '#fafafa',
+              cursor: 'pointer',
+            }}
+          >
+            <option value="">— choose a subject —</option>
+            {subjects.map(s => (
+              <option key={s.id} value={s.id}>{s.name}  ({s.code})</option>
+            ))}
+          </select>
+
+          {selectedSubject && (
+            <span style={{
+              fontSize: 12, fontWeight: 600, color: 'var(--primary)',
+              background: 'var(--primary-light)', padding: '4px 10px', borderRadius: 20,
+            }}>
+              {selectedSubject.name}
+            </span>
+          )}
+        </div>
+
+        {/* Placeholder when no subject chosen */}
+        {!selectedSubject ? (
+          <div style={{
+            textAlign: 'center', padding: '80px 20px',
+            color: 'var(--text-muted)', fontSize: 13,
+          }}>
+            <div style={{ fontSize: 32, marginBottom: 12 }}>📚</div>
+            <div style={{ fontWeight: 600, color: 'var(--text-secondary)', marginBottom: 4 }}>
+              Select a subject to manage its questions
+            </div>
+            <div>Single question upload and the full question bank list will appear here.</div>
+          </div>
+        ) : (
+          /* ── Subject page content (single Q upload + question bank list) ──
+             This is your EXISTING subject-page JSX.
+             Pass it in as <SubjectPageContent /> or inline it here directly. */
+          <SubjectPageContent />
+        )}
+      </div>
+    )}
+  </div>
+);
+
+
+// ─────────────────────────────────────────────────────────────
+// HOW TO WIRE INTO YOUR EXISTING COMPONENT
+// ─────────────────────────────────────────────────────────────
+//
+// 1. Add to state (alongside your existing state):
+//
+//    const [questionBankSubTab, setQuestionBankSubTab] = useState('bulk');
+//    const [subjectsOpen, setSubjectsOpen]             = useState(false);
+//
+// 2. In your sidebar JSX, replace the old 'QuestionBank' button block with:
+//
+//    <SidebarQuestionBankSection
+//      teacherTab={teacherTab}
+//      setTeacherTab={setTeacherTab}
+//      subjectsOpen={subjectsOpen}
+//      setSubjectsOpen={setSubjectsOpen}
+//      subjects={subjects}
+//      selectedSubject={selectedSubject}
+//      selectSubject={(s) => {
+//        selectSubject(s);            // your existing selectSubject logic
+//        setQuestionBankSubTab('subject'); // auto-switch to subject sub-tab
+//      }}
+//    />
+//
+// 3. In your main content area, replace the old QuestionBank block with:
+//
+//    {teacherTab === 'QuestionBank' && (
+//      <QuestionBankMainContent
+//        questionBankSubTab={questionBankSubTab}
+//        setQuestionBankSubTab={setQuestionBankSubTab}
+//        questionFile={questionFile}
+//        setQuestionFile={setQuestionFile}
+//        imageZipFile={imageZipFile}
+//        setImageZipFile={setImageZipFile}
+//        excelInputRef={excelInputRef}
+//        imageZipInputRef={imageZipInputRef}
+//        handleUploadQuestions={handleUploadQuestions}
+//        msg={msg}
+//        subjects={subjects}
+//        selectedSubject={selectedSubject}
+//        selectSubject={selectSubject}
+//        SubjectPageContent={() => (
+//          /* paste your EXISTING subject-page JSX here:
+//             the 2-column grid with the single-Q upload form on the left
+//             and the question bank list on the right */
+//          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 24 }}>
+//            {/* ... existing subject page code ... */}
+//          </div>
+//        )}
+//      />
+//    )}
+//
+// ─────────────────────────────────────────────────────────────
+
+export { SidebarQuestionBankSection, QuestionBankMainContent };
+
+
+// ─────────────────────────────────────────────────────────────
+// FULL DIFF SUMMARY  (what changed vs original)
+// ─────────────────────────────────────────────────────────────
+//
+// OLD structure (inside sidebar when QuestionBank tab was active):
+//   [QuestionBank tab button]
+//     └─ [Subjects collapsible]
+//          └─ [Subject buttons]
+//
+//   Main content:
+//     [bulk | subject-wise] sub-tabs
+//       bulk    → bulk upload card
+//       subject → dropdown + (if selected) 2-col grid with single-Q upload + Q-bank list
+//
+// NEW structure:
+//   Sidebar:
+//   [QuestionBank tab button]          ← styled with upload icon, same click behaviour
+//     └─ [Subjects ▸ collapsible]      ← only visible when QBank tab is active
+//          └─ [per-subject buttons]    ← clicking sets selectedSubject AND switches to
+//                                         subject sub-tab in main content
+//
+//   Main content (when QuestionBank tab active):
+//   [📂 Question Bank Upload | 📚 Subject-wise Upload]   ← pill sub-tabs
+//
+//     "Question Bank Upload" sub-tab:
+//       → Bulk upload card (Excel / ZIP) — NO single-Q form
+//
+//     "Subject-wise Upload" sub-tab:
+//       → Subject picker dropdown
+//       → If subject selected: renders existing SubjectPageContent
+//         (single-Q upload form + question bank list)
+//       → If no subject: friendly placeholder
+//
+//   Single-Q upload form appears ONLY inside the subject page
+//   (SubjectPageContent), never at the top-level Question Bank tab.
+// ─────────────────────────────────────────────────────────────

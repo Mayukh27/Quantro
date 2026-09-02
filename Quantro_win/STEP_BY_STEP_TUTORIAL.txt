@@ -1,0 +1,136 @@
+QUANTRO WINDOWS - STEP BY STEP TUTORIAL
+======================================
+
+1. Install prerequisites
+------------------------
+1) Install Java 17+
+   - Download from: https://adoptium.net/
+   - Verify: open Command Prompt and run:
+     java -version
+
+2) Install PostgreSQL 14+
+   - Download from: https://www.postgresql.org/download/windows/
+   - Create a database, for example: examdbv-2
+   - Note the username/password for the database
+
+3) Install nginx for Windows
+   - Download the stable nginx zip from: https://nginx.org/en/download.html
+   - Extract it to a folder such as:
+     C:\nginx-1.30.0
+   - Keep the full path to nginx.exe
+
+2. Prepare the app configuration
+--------------------------------
+1) Open the Quantro_win folder.
+2) Copy the env template:
+   - Make a copy of .env.template and rename it to .env
+3) Edit .env and set at least:
+   - DB_URL=jdbc:postgresql://127.0.0.1:5432/YOUR_DB_NAME
+   - DB_USERNAME=your_postgres_user
+   - DB_PASSWORD=your_postgres_password
+   - JWT_SECRET=a_long_random_secret
+   - NGINX_BIN=C:\nginx-1.30.0\nginx.exe
+4) Save the file.
+
+3. Start the application
+------------------------
+Option A: Double-click run.bat
+Option B: Open PowerShell and run:
+  powershell -ExecutionPolicy Bypass -File .\start.ps1
+
+Wait around 20-30 seconds for the backend and nginx to start.
+
+4. Open the app
+---------------
+Open your browser and visit:
+  http://localhost/
+
+5. Create an admin account
+--------------------------
+You can create the first admin in either of these two ways.
+
+Method A: Use pgAdmin
+1) Open pgAdmin and connect to your PostgreSQL server.
+2) Open the database used by Quantro.
+3) Open Query Tool.
+4) Run this SQL:
+
+   INSERT INTO users (
+     email,
+     password,
+     full_name,
+     role,
+     approved,
+     enabled,
+     created_at,
+     updated_at
+   ) VALUES (
+     'admin@example.com',
+     '$2a$10$8x9nI6K2sc7sQ0hIJ4m.Du8f6a1pE8v7z8W4xV7QWk7vI0u4d2wS2',
+     'System Admin',
+     'ADMIN',
+     true,
+     true,
+     NOW(),
+     NOW()
+   );
+
+5) Use the password: Admin@1234
+   - This is a bcrypt hash for the plain password Admin@1234.
+
+Method B: Use SQL with a password hash generated in psql shell
+1) Open psql or the PostgreSQL shell.
+2) Connect to the app database.
+3) Run this SQL:
+
+   INSERT INTO users (
+     email,
+     password,
+     full_name,
+     role,
+     approved,
+     enabled,
+     created_at,
+     updated_at
+   ) VALUES (
+     'admin@example.com',
+     crypt('Admin@1234', gen_salt('bf')),
+     'System Admin',
+     'ADMIN',
+     true,
+     true,
+     NOW(),
+     NOW()
+   );
+
+4) The password will be stored as a proper bcrypt hash.
+
+Method C: Use curl to create the admin through the app API
+1) Make sure the app is running.
+2) Run this command in PowerShell or Command Prompt:
+
+   curl -X POST http://localhost/auth/register -H "Content-Type: application/json" -d "{\"email\":\"admin@example.com\",\"password\":\"Admin@1234\",\"fullName\":\"System Admin\",\"role\":\"ADMIN\"}"
+
+3) If the API responds successfully, the admin account will be created.
+4) Then log in with:
+   - Email: admin@example.com
+   - Password: Admin@1234
+
+Important notes
+---------------
+- The app expects the users table and the role field to match the current backend model.
+- The application uses BCrypt for password hashing.
+- The direct SQL method is the fastest for the first admin, but the curl method is useful when you want to create the account through the running application.
+
+6. Log in
+---------
+1) Open the app login page.
+2) Sign in with:
+   - Email: admin@example.com
+   - Password: Admin@1234
+
+7. Stop the app
+---------------
+Option A: Double-click stop.bat
+Option B: Run in PowerShell:
+  powershell -ExecutionPolicy Bypass -File .\stop.ps1
